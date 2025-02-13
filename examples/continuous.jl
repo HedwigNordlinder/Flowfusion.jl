@@ -56,7 +56,7 @@ for i in 1:iters
     Xt = bridge(P, X0, X1, t)
     #Gradient:
     l,g = Flux.withgradient(model) do m
-        floss(P, m(t,Xt), X1, scalefloss(P, t, 2))
+        floss(P, m(t,Xt), X1, scalefloss(P, t))
     end
     #Update:
     Flux.update!(opt_state, model, g[1])

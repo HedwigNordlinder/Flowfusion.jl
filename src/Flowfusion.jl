@@ -27,5 +27,13 @@ cat_shape(t) = [-(721*sin(t))/4+196/3*sin(2*t)-86/3*sin(3*t)-131/2*sin(4*t)+477/
 
 random_literal_cat(dims...; sigma = 0.05f0) = typeof(sigma).(stack([cat_shape(rand()*2pi)/200 for _ in zeros(dims...)]) .+ randn(2, dims...) * sigma)
 
+function discretize(x, d, lo, hi)
+    for (i, v) in enumerate(range(lo, hi, length = d - 1))
+        x < v && return i
+    end
+    d
+end
+
+random_discrete_cat(dims...; d = 32, lo = -2.5, hi = 2.5) = discretize.(random_literal_cat(dims...), (d,), (lo,), (hi,))
 
 end
