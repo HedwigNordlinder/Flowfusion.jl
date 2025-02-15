@@ -17,11 +17,28 @@ process(P::Process) = P
 tscale(P::Process, t) = t
 tscale(P::FProcess, t) = P.F.(t)
 
+#=#####################
+Conditioning mask behavior:
+The typical use is that it makes sense, during training, to construct the conditioning mask on the training observation, X1.
+During inference, the conditioning mask (and conditioned-upon state) has to be present on X1.
+This dictates the behavior of the masking:
+- When bridge() is called, the mask, and the state where mask=1, are inherited from X1.
+- When gen is called, the state and mask will be propogated from X0 through all of the Xts.
+=#####################
 struct MaskedState{A,B,C}
     S::A     #State
     cmask::B #Conditioning mask. 1 = Xt=X1
     lmask::C #Loss mask.         1 = included in loss
 end
+
+#For when we want to predict the transitions instead of X1hat
+struct BackwardGuide{A}
+    H::A
+end
+ForwardBackward.:⊙(a::CategoricalLikelihood, b::BackwardGuide) = ⊙(a,copytensor!(copy(a),b.H))
+
+#⊙ itself doesn't force the masks - it just propogates them. The forcing happens elsewhere.
+ForwardBackward.:⊙(a::MaskedState, b::MaskedState; kwargs...) = MaskedState(⊙(a.S, b.S; kwargs...), a.cmask .* b.cmask, a.lmask .* b.lmask)
 
 Adapt.adapt_structure(to, S::ForwardBackward.DiscreteState) = ForwardBackward.DiscreteState(S.K, Adapt.adapt(to, S.state))
 Adapt.adapt_structure(to, S::ForwardBackward.ContinuousState) = ForwardBackward.ContinuousState(Adapt.adapt(to, S.state))
@@ -30,7 +47,7 @@ Adapt.adapt_structure(to, MS::MaskedState{<:State}) = MaskedState(Adapt.adapt(to
 Adapt.adapt_structure(to, MS::MaskedState{<:CategoricalLikelihood}) = MaskedState(Adapt.adapt(to, MS.S), Adapt.adapt(to, MS.cmask), Adapt.adapt(to, MS.lmask))
 Adapt.adapt_structure(to, S::ForwardBackward.ManifoldState) = ForwardBackward.ManifoldState(S.M, Adapt.adapt(to, S.state))
 
-UState = Union{State,MaskedState}
+UState = Union{State,MaskedState, BackwardGuide}
 
 ForwardBackward.tensor(X::MaskedState) = tensor(X.S)
 
@@ -63,6 +80,40 @@ cmask!(Xt, X1::MaskedState) = cmask!(Xt.S.state, X1.S.state, X1.cmask)
 cmask!(Xt, X1::MaskedState{<:CategoricalLikelihood}) = error("Cannot condition on a CategoricalLikelihood")
 cmask!(x̂₁::Tuple, x₀::Tuple) = map(cmask!, x̂₁, x₀)
 
+
+#copytensor! and predictresolve are used handle the state translation that happens in gen(...).
+#We want the user's X̂₁predictor, which is a DL model, to return a plain tensor (since that will be on the GPU, in the loss, etc).
+#This means we need to automagically create a State (typical for the continuous case) or Likelihood (typical for the discrete case) from the tensor.
+#But the user may return a State in the Discrete case (for massive state spaces with sub-linear sampling), and a Likelihood in the Continuous case (for variance matching models)
+#This also needs to handle MaskedStates (needs testing).
+#We need: X̂₁ =  fix(X̂₁predictor(t, Xₜ))
+#Plan: When X̂₁predictor(t, Xₜ) is a State or Likelihood, just pass through.
+#When X̂₁predictor(t, Xₜ) is a plain tensor, we apply default conversion rules.
+
+function copytensor!(dest, src)
+    tensor(dest) .= tensor(src)
+    return dest
+end
+#copytensor!(dest::Tuple, src::Tuple) = map(copytensor!, dest, src)
+
+#resolveprediction exists to stop bridge from needing multiple definitions.
+#Tuple broadcast:
+resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
+#Default if X̂₁ is a plain tensor:
+resolveprediction(X̂₁, Xₜ::DiscreteState) = copytensor!(stochastic(Xₜ), X̂₁) #Returns a Likelihood
+resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
+#Passthrough if the user returns a State or Likelihood
+resolveprediction(X̂₁::State, Xₜ) = X̂₁
+resolveprediction(X̂₁::State, Xₜ::State) = X̂₁
+resolveprediction(X̂₁::StateLikelihood, Xₜ) = X̂₁
+
+#Passthrough if the model returns a BackwardGuide, because we have a custom bridge for that.
+resolveprediction(G::BackwardGuide, Xₜ::DiscreteState) = G
+resolveprediction(G::BackwardGuide, Xₜ::ManifoldState) = apply_tangent_coordinates(Xₜ, G.H)
+#We could also add a case for where the guide is a tangent coordinate and X₀ is a ManifoldState.
+
+
+
 """
     bridge(P, X0, X1, t)
     bridge(P, X0, X1, t0, t)
@@ -82,59 +133,38 @@ end
 bridge(P, X0, X1, t) = bridge(P, X0, X1, eltype(t)(0.0), t)
 bridge(P::Tuple{Vararg{UProcess}}, X0::Tuple{Vararg{UState}}, X1::Tuple, t0, t) = bridge.(P, X0, X1, (t0,), (t, ))
 
+#Step is like bridge (and falls back to where possible). But sometimes we only have enough to take an Euler step (which is ok when `s₂-s₁` is small).
+step(P, Xₜ, hat, s₁, s₂) = bridge(P, Xₜ, hat, s₁, s₂)
+step(P::Tuple{Vararg{UProcess}}, Xₜ::Tuple{Vararg{UState}}, hat::Tuple, s₁, s₂) = step.(P, Xₜ, hat, (s₁,), (s₂, ))
+#step(P::DiscreteProcess, Xₜ::DiscreteState, hat::BackwardGuide, s₁, s₂) = rand(forward(Xₜ, P, s₂ .- s₁) ⊙ hat) #<- Doesn't work
 
 
-#copytensor! and predictresolve are used handle the state translation that happens in gen(...).
-#We want the user's X̂₁predictor, which is a DL model, to return a plain tensor (since that will be on the GPU, in the loss, etc).
-#This means we need to automagically create a State (typical for the continuous case) or Likelihood (typical for the discrete case) from the tensor.
-#But the user may return a State in the Discrete case (for massive state spaces with sub-linear sampling), and a Likelihood in the Continuous case (for variance matching models)
-#This also needs to handle MaskedStates (needs testing).
-#We need: X̂₁ =  fix(X̂₁predictor(t, Xₜ))
-#Plan: When X̂₁predictor(t, Xₜ) is a State or Likelihood, just pass through.
-#When X̂₁predictor(t, Xₜ) is a plain tensor, we apply default conversion rules.
-
-function copytensor!(dest, src)
-    tensor(dest) .= tensor(src)
-    return dest
-end
-#copytensor!(dest::Tuple, src::Tuple) = map(copytensor!, dest, src)
-
-#Tuple broadcast:
-resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
-#Default if X̂₁ is a plain tensor:
-resolveprediction(X̂₁, X₀::DiscreteState) = copytensor!(stochastic(X₀), X̂₁) #Returns a Likelihood
-resolveprediction(X̂₁, X₀::State) = copytensor!(copy(X₀), X̂₁) #Returns a State - Handles Continuous and Manifold cases
-#Passthrough if the user returns a State or Likelihood
-resolveprediction(X̂₁::State, X₀) = X̂₁
-resolveprediction(X̂₁::State, X₀::State) = X̂₁
-resolveprediction(X̂₁::StateLikelihood, X₀) = X̂₁
 #####Add MaskedState case(s)######
 
 ##################################
 
-
-
 """
-    gen(P, X0, X̂₁predictor, steps; tracker=Returns(nothing), midpoint = false)
+    gen(P, X0, model, steps; tracker=Returns(nothing), midpoint = false)
 
 Constructs a sequence of (stochastic) bridges between `X0` and the predicted `X̂₁` under the process `P`.
-`P`, `X0`, can also be tuples where the Nth element of `P` will be used for the Nth elements of `X0` and `X̂₁predictor`.
-X̂₁predictor is a function that takes `t` (scalar) and `Xₜ` (optionally a tuple) and returns `X̂₁` (a `UState`, a flat tensor with the right shape, or a tuple of either).
-If `X0` is a `MaskedState` (or has a ), then anything  `X̂₁` will be conditioned on `X0` where the conditioning mask `X0.cmask` is 1.
+`P`, `X0`, can also be tuples where the Nth element of `P` will be used for the Nth elements of `X0` and `model`.
+model is a function that takes `t` (scalar) and `Xₜ` (optionally a tuple) and returns `hat` (a `UState`, a flat tensor with the right shape, or a tuple of either if you're combining processes).
+If `X0` is a `MaskedState`, then anything in `X̂₁` will be conditioned on `X0` where the conditioning mask `X0.cmask` is 1.
 """
-function gen(P::Tuple{Vararg{UProcess}}, X₀::Tuple{Vararg{UState}}, X̂₁predictor, steps::AbstractVector; tracker::Function=Returns(nothing), midpoint = false)
+function gen(P::Tuple{Vararg{UProcess}}, X₀::Tuple{Vararg{UState}}, model, steps::AbstractVector; tracker::Function=Returns(nothing), midpoint = false)
     Xₜ = copy.(X₀)
     for (s₁, s₂) in zip(steps, steps[begin+1:end])
         t = midpoint ? (s₁ + s₂) / 2 : t = s₁
-        X̂₁ = resolveprediction(X̂₁predictor(t, Xₜ), X₀)
-        cmask!(X̂₁, X₀)
-        Xₜ = bridge(P, Xₜ, X̂₁, s₁, s₂)
-        tracker(t, Xₜ, X̂₁)
+        hat = resolveprediction(model(t, Xₜ), Xₜ)
+        Xₜ = step(P, Xₜ, hat, s₁, s₂)
+        cmask!(Xₜ, X₀)
+        tracker(t, Xₜ, hat)
     end
     return Xₜ
 end
 
-gen(P, X₀, X̂₁predictor, args...; kwargs...) = gen((P,), (X₀,), (t, Xₜ) -> (X̂₁predictor(t[1], Xₜ[1]),), args...; kwargs...)[1]
+
+gen(P, X₀, model, args...; kwargs...) = gen((P,), (X₀,), (t, Xₜ) -> (model(t[1], Xₜ[1]),), args...; kwargs...)[1]
 
 struct Tracker <: Function
     t::Vector

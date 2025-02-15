@@ -3,7 +3,7 @@ Pkg.activate(".")
 using Revise
 Pkg.develop(path="../../ForwardBackward/")
 Pkg.develop(path="../")
-using ForwardBackward, Flowfusion, NNlib, Flux, RandomFeatureMaps, Optimisers, Plots
+using ForwardBackward, Flowfusion, NNlib, Flux, RandomFeatureMaps, Optimisers, Plots, Manifolds
 
 #Set up a Flux model: ξhat = model(t,Xt)
 struct TModel{A}
@@ -39,8 +39,8 @@ sampleX1(n_samples) = Flowfusion.random_literal_cat(n_samples, sigma = T(0.05))[
 n_samples = 500
 
 M = Torus(2)
-#P = ManifoldProcess(0.2f0)
-P = Deterministic()
+P = ManifoldProcess(0.2f0)
+#P = Deterministic()
 
 eta = 0.01
 opt_state = Flux.setup(AdamW(eta = eta, lambda = 0.00001), model)
@@ -76,7 +76,7 @@ n_inference_samples = 2000
 X0 = ManifoldState(M, eachcol(sampleX0(n_inference_samples)))
 paths = Tracker()
 #We wrap the model, because it was predicting tangent coordinates, not the actual state:
-X1pred = (t,Xt) -> apply_tangent_coordinates(Xt, model(t,tensor(Xt)))
+X1pred = (t,Xt) -> BackwardGuide(model(t,tensor(Xt)))
 samp = gen(P, X0, X1pred, 0f0:0.002f0:1f0, tracker = paths)
 
 #Plot the torus, with samples, and trajectories:

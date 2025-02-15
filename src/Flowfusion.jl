@@ -4,8 +4,12 @@ using ForwardBackward, OneHotArrays, Adapt, Manifolds, NNlib
 
 include("bridge.jl")
 include("loss.jl")
+include("processes.jl")
 
-export 
+export
+    #Processes not in ForwardBackward.jl
+    InterpolatingDiscreteFlow,
+    NoisyInterpolatingDiscreteFlow,
     MaskedState,
     bridge,    
     scalefloss,
@@ -15,6 +19,7 @@ export
     onehot,
     FProcess,
     tangent_coordinates,
+    BackwardGuide,
     apply_tangent_coordinates,
     floss,
     tcloss
