@@ -31,7 +31,7 @@ function (f::TModel)(t, Xt)
     return (l.decode(x) .* (1.05f0 .- tv))
 end
 
-model = TModel(embeddim = 256, layers = 3, spacedim = 2)
+model = TModel(embeddim = 128, layers = 3, spacedim = 2)
 
 T = Float32
 sampleX0(n_samples) = rand(T, 2, n_samples) .+ [2.1f0, 1]
@@ -45,7 +45,7 @@ P = ManifoldProcess(0.2f0)
 eta = 0.01
 opt_state = Flux.setup(AdamW(eta = eta, lambda = 0.00001), model)
 
-iters = 8000
+iters = 4000
 for i in 1:iters
     #Set up a batch of training pairs, and t
     X1 = ManifoldState(M, eachcol(sampleX1(n_samples))) #Note: eachcol
@@ -54,7 +54,7 @@ for i in 1:iters
     #Construct the bridge:
     Xt = bridge(P, X0, X1, t)
     #Compute the tangent coordinates:
-    ξ = Flowfusion.tangent_coordinates(Xt, X1)
+    ξ = tangent_guide(Xt, X1)
     #Gradient
     l,g = Flux.withgradient(model) do m
         tcloss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t))
@@ -63,7 +63,7 @@ for i in 1:iters
     Flux.update!(opt_state, model, g[1])
     #Logging, and lr cooldown:
     if i % 10 == 0
-        if i > iters - 3000
+        if i > iters - 2000
             eta *= 0.975
             Optimisers.adjust!(opt_state, eta)
         end
@@ -76,7 +76,7 @@ n_inference_samples = 2000
 X0 = ManifoldState(M, eachcol(sampleX0(n_inference_samples)))
 paths = Tracker()
 #We wrap the model, because it was predicting tangent coordinates, not the actual state:
-X1pred = (t,Xt) -> BackwardGuide(model(t,tensor(Xt)))
+X1pred = (t,Xt) -> Guide(model(t,tensor(Xt)))
 samp = gen(P, X0, X1pred, 0f0:0.002f0:1f0, tracker = paths)
 
 #Plot the torus, with samples, and trajectories:

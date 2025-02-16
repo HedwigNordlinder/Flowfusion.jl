@@ -1,7 +1,30 @@
+#=
+Need to test/do:
+Urgent:
+- Test tuples!
+- Masking (cmask) on all state types for bridge and gen
+- Masking (lmask) on all state types for both losses
+- tensor on masked states
+- FProcess and whether it matches the target where allowed. Need to come up with a policy on using FProcess with InterpolatingDiscreteProcesses
+- X1 pred for rotations (add angle/axis loss back in just because yolo)
+- self-conditioning
+- GPU use of all state types
+Later:
+- Make a table of Manifolds where you test whether the key functions are defined, with checkboxes and timing for diffusion and flow.
+- Make a table of commands for key types of diffusion/flow. Columns for Process, X0/X1 setup, Xt bridge, loss, gen where things like softmax, Guide, etc are clear.
+- Compute probability velocities for UniformDiscrete and PiQ so these can flow.
+=#
+
+
+
+
+
 module Flowfusion
 
 using ForwardBackward, OneHotArrays, Adapt, Manifolds, NNlib
 
+include("types.jl")
+include("mask.jl")
 include("bridge.jl")
 include("loss.jl")
 include("processes.jl")
@@ -11,18 +34,18 @@ export
     InterpolatingDiscreteFlow,
     NoisyInterpolatingDiscreteFlow,
     MaskedState,
+    Guide,
+    tangent_guide,
     bridge,    
     scalefloss,
     gen,
     Tracker,
     stack_tracker,
     onehot,
-    FProcess,
-    tangent_coordinates,
-    BackwardGuide,
-    apply_tangent_coordinates,
+    FProcess, 
     floss,
-    tcloss
+    tcloss,
+    dense
 
 
 #Useful for demos etc:

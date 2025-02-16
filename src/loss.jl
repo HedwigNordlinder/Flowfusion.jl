@@ -12,14 +12,6 @@ NOTES on what works:
 - - - or X0 must be a continuous distribution (ie. not discrete "corners") on the ProbabilitySimplex (in which case a deterministic process also works)
 =#######
 
-#Allowing onehot to work with forward/backward
-onehot(X::DiscreteState{<:AbstractArray{<:Integer}}) = DiscreteState(X.K, onehotbatch(X.state, 1:X.K))
-onehot(X::MaskedState{<:DiscreteState{<:AbstractArray{<:Integer}}}) = MaskedState(onehot(X.S), X.cmask, X.lmask)
-ForwardBackward.stochastic(T::Type, o::DiscreteState{<:OneHotArray}) = CategoricalLikelihood(T.(o.state .+ 0), zeros(T, size(o.state)[2:end]...))
-
-getlmask(X1::UState) = X1.lmask
-getlmask(X1::State) = nothing
-
 #This is badness that doesn't work:
 #rotangle(rots::AbstractArray{T,3}) where T = acos.(clamp.((rots[1,1,:] .+ rots[2,2,:] .+ rots[3,3,:] .- 1) ./ 2, T(-0.99), T(0.99)))
 #rotangle(rots::AbstractArray) = reshape(rotangle(reshape(rots, 3, 3, :)), 1, size(rots)[3:end]...)
@@ -73,42 +65,7 @@ Where `ξhat` is the predicted tangent coordinates, and `ξ` is the true tangent
 tcloss(P::Union{fbu(ManifoldProcess), fbu(Deterministic)}, ξhat, ξ, c, mask = nothing) = scaledmaskedmean(mse(ξhat, ξ), c, mask)
 tcloss(P::fbu(DiscreteProcess), ξhat, ξ, c, mask = nothing) = scaledmaskedmean(rkl(ξhat, ξ), c, mask)
 
-#=If we want the model to directly predict the tangent coordinates, we use:
-- tangent_coordinates outside the gradient call to get the thing the model will predict
-- apply_tangent_coordinates during gen, to provide X̂₁ when the model is predicting the tangent coordinates
-- the loss should just be the mse between the predicted tangent coordinates and the true tangent coordinates
-Note: this gives you an invariance for free, since the model is predicting the change from Xt that results in X1.
-=#
-"""
-    tangent_coordinates(Xt::ManifoldState, X1::ManifoldState)
 
-Computes the coordinate vector (in the default basis) pointing from `Xt` to `X1`.
-"""
-function tangent_coordinates(Xt::ManifoldState, X1::ManifoldState; inverse_retraction_method=default_inverse_retraction_method(X1.M))
-    T = eltype(tensor(X1))
-    d = manifold_dimension(X1.M)
-    ξ = zeros(T, d, size(Xt.state)...)
-    temp_retract = inverse_retract(X1.M, Xt.state[1], X1.state[1], inverse_retraction_method)
-    for ind in eachindex(Xt.state)
-        inverse_retract!(X1.M, temp_retract, Xt.state[ind], X1.state[ind], inverse_retraction_method)
-        ξ[:,ind] .= get_coordinates(X1.M, Xt.state[ind], temp_retract)
-    end
-    return ξ
-end
-
-"""
-    apply_tangent_coordinates(Xt::ManifoldState, ξ; retraction_method=default_retraction_method(Xt.M))
-
-returns `X̂₁` where each point is the result of retracting `Xt` by the corresponding tangent coordinate vector `ξ`.
-"""
-function apply_tangent_coordinates(Xt::ManifoldState, ξ; retraction_method=default_retraction_method(Xt.M))
-    X̂₁ = copy(Xt)
-    for ind in eachindex(Xt.state)
-        X = get_vector(Xt.M, Xt.state[ind], ξ[:,ind])
-        retract!(Xt.M, X̂₁.state[ind], Xt.state[ind], X, retraction_method)
-    end
-    return X̂₁
-end
 
 
 #=

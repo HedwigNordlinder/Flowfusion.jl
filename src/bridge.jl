@@ -5,96 +5,39 @@ Assumptions:
 - Default sampling steps are FProcess.F(t) with even t intervals [NOTE TO SELF: Intervals should be F(t2)-F(t1)]
 =#####################
 
-struct FProcess{A,B}
-    P::A #Process
-    F::B #Time transform
-end
-
-UProcess = Union{Process,FProcess}
 process(P::FProcess) = P.P
 process(P::Process) = P
 
 tscale(P::Process, t) = t
 tscale(P::FProcess, t) = P.F.(t)
 
-#=#####################
-Conditioning mask behavior:
-The typical use is that it makes sense, during training, to construct the conditioning mask on the training observation, X1.
-During inference, the conditioning mask (and conditioned-upon state) has to be present on X1.
-This dictates the behavior of the masking:
-- When bridge() is called, the mask, and the state where mask=1, are inherited from X1.
-- When gen is called, the state and mask will be propogated from X0 through all of the Xts.
-=#####################
-struct MaskedState{A,B,C}
-    S::A     #State
-    cmask::B #Conditioning mask. 1 = Xt=X1
-    lmask::C #Loss mask.         1 = included in loss
-end
-
-#For when we want to predict the transitions instead of X1hat
-struct BackwardGuide{A}
-    H::A
-end
-ForwardBackward.:⊙(a::CategoricalLikelihood, b::BackwardGuide) = ⊙(a,copytensor!(copy(a),b.H))
-
-#⊙ itself doesn't force the masks - it just propogates them. The forcing happens elsewhere.
-ForwardBackward.:⊙(a::MaskedState, b::MaskedState; kwargs...) = MaskedState(⊙(a.S, b.S; kwargs...), a.cmask .* b.cmask, a.lmask .* b.lmask)
-
 Adapt.adapt_structure(to, S::ForwardBackward.DiscreteState) = ForwardBackward.DiscreteState(S.K, Adapt.adapt(to, S.state))
 Adapt.adapt_structure(to, S::ForwardBackward.ContinuousState) = ForwardBackward.ContinuousState(Adapt.adapt(to, S.state))
 Adapt.adapt_structure(to, S::ForwardBackward.CategoricalLikelihood) = ForwardBackward.CategoricalLikelihood(Adapt.adapt(to, S.dist), Adapt.adapt(to, S.log_norm_const))
-Adapt.adapt_structure(to, MS::MaskedState{<:State}) = MaskedState(Adapt.adapt(to, MS.S), Adapt.adapt(to, MS.cmask), Adapt.adapt(to, MS.lmask))
-Adapt.adapt_structure(to, MS::MaskedState{<:CategoricalLikelihood}) = MaskedState(Adapt.adapt(to, MS.S), Adapt.adapt(to, MS.cmask), Adapt.adapt(to, MS.lmask))
 Adapt.adapt_structure(to, S::ForwardBackward.ManifoldState) = ForwardBackward.ManifoldState(S.M, Adapt.adapt(to, S.state))
 
-UState = Union{State,MaskedState, BackwardGuide}
+"""
+    onehot(X)
 
-ForwardBackward.tensor(X::MaskedState) = tensor(X.S)
-
-import Base.copy
-copy(X::MaskedState) = MaskedState(copy(X.S), copy(X.cmask), copy(X.lmask))
+Rerturns a state where `X.state` is a onehot array.
+"""
+onehot(X::DiscreteState{<:AbstractArray{<:Integer}}) = DiscreteState(X.K, onehotbatch(X.state, 1:X.K))
+onehot(X::DiscreteState{<:OneHotArray}) = X
+ForwardBackward.stochastic(T::Type, o::DiscreteState{<:OneHotArray}) = CategoricalLikelihood(T.(o.state .+ 0), zeros(T, size(o.state)[2:end]...))
 
 """
-    endslices(a,m)
+    dense(X::DiscreteState; T = Float32)
 
-Returns a view of `a` where slices specified by `m` are selected. `m` can be multidimensional, but the dimensions of m must match the last dimensions of `a`.
-For example, if `m` is a boolean array, then `size(a)[ndims(a)-ndims(m):end] == size(m)`.
+Converts `X` to an appropriate dense representation. If `X` is a `DiscreteState`, then `X` is converted to a `CategoricalLikelihood` with default eltype Float32.
+If `X` is a "onehot" CategoricalLikelihood then `X` is converted to a fully dense one.
 """
-endslices(a,m) = @view a[ntuple(Returns(:),ndims(a)-ndims(m))...,m]
+dense(X::DiscreteState; T = Float32) = stochastic(T, X)
 
-"""
-    cmask!(Xt_state, X1_state, cmask)
-    cmask!(Xt, X1)
-
-Applies, in place, a conditioning mask, forcing elements (or slices) of `Xt` to be equal to `X1`, where `cmask` is 1.
-"""
-function cmask!(Xt_state, X1_state, cmask)
-    endslices(Xt_state,cmask) .= endslices(X1_state,cmask)
-    return Xt_state
-end
-
-cmask!(Xt_state, X1_state, cmask::Nothing) = Xt_state
-cmask!(Xt, X1::State) = Xt
-cmask!(Xt, X1::StateLikelihood) = Xt
-cmask!(Xt, X1::MaskedState) = cmask!(Xt.S.state, X1.S.state, X1.cmask)
-cmask!(Xt, X1::MaskedState{<:CategoricalLikelihood}) = error("Cannot condition on a CategoricalLikelihood")
-cmask!(x̂₁::Tuple, x₀::Tuple) = map(cmask!, x̂₁, x₀)
-
-
-#copytensor! and predictresolve are used handle the state translation that happens in gen(...).
-#We want the user's X̂₁predictor, which is a DL model, to return a plain tensor (since that will be on the GPU, in the loss, etc).
-#This means we need to automagically create a State (typical for the continuous case) or Likelihood (typical for the discrete case) from the tensor.
-#But the user may return a State in the Discrete case (for massive state spaces with sub-linear sampling), and a Likelihood in the Continuous case (for variance matching models)
-#This also needs to handle MaskedStates (needs testing).
-#We need: X̂₁ =  fix(X̂₁predictor(t, Xₜ))
-#Plan: When X̂₁predictor(t, Xₜ) is a State or Likelihood, just pass through.
-#When X̂₁predictor(t, Xₜ) is a plain tensor, we apply default conversion rules.
 
 function copytensor!(dest, src)
     tensor(dest) .= tensor(src)
     return dest
 end
-#copytensor!(dest::Tuple, src::Tuple) = map(copytensor!, dest, src)
 
 #resolveprediction exists to stop bridge from needing multiple definitions.
 #Tuple broadcast:
@@ -106,11 +49,8 @@ resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Return
 resolveprediction(X̂₁::State, Xₜ) = X̂₁
 resolveprediction(X̂₁::State, Xₜ::State) = X̂₁
 resolveprediction(X̂₁::StateLikelihood, Xₜ) = X̂₁
-
-#Passthrough if the model returns a BackwardGuide, because we have a custom bridge for that.
-resolveprediction(G::BackwardGuide, Xₜ::DiscreteState) = G
-resolveprediction(G::BackwardGuide, Xₜ::ManifoldState) = apply_tangent_coordinates(Xₜ, G.H)
-#We could also add a case for where the guide is a tangent coordinate and X₀ is a ManifoldState.
+#Handles when the 
+resolveprediction(G::Guide, Xₜ::ManifoldState) = apply_tangent_coordinates(Xₜ, G.H)
 
 
 
@@ -124,11 +64,11 @@ If `X1` is a `MaskedState`, then `Xt` will equal `X1` where the conditioning mas
 The same `t` and (optionally) `t0` will be used for all elements. If you need a different `t` for each Proces/State, broadcast with `bridge.(P, X0, X1, t0, t)`.
 """
 
-function bridge(P::UProcess, X0::UState, X1, t0, t)
+function bridge(P::UProcess, X0, X1, t0, t)
     T = eltype(t)
     tF = T.(tscale(P,t) .- tscale(P,t0))
     tB = T.(tscale(P,1) .- tscale(P,t))
-    endpoint_conditioned_sample(cmask!(X0,X1), X1, process(P), tF, tB)
+    endpoint_conditioned_sample(X0, X1, process(P), tF, tB)
 end
 bridge(P, X0, X1, t) = bridge(P, X0, X1, eltype(t)(0.0), t)
 bridge(P::Tuple{Vararg{UProcess}}, X0::Tuple{Vararg{UState}}, X1::Tuple, t0, t) = bridge.(P, X0, X1, (t0,), (t, ))
@@ -136,12 +76,8 @@ bridge(P::Tuple{Vararg{UProcess}}, X0::Tuple{Vararg{UState}}, X1::Tuple, t0, t) 
 #Step is like bridge (and falls back to where possible). But sometimes we only have enough to take an Euler step (which is ok when `s₂-s₁` is small).
 step(P, Xₜ, hat, s₁, s₂) = bridge(P, Xₜ, hat, s₁, s₂)
 step(P::Tuple{Vararg{UProcess}}, Xₜ::Tuple{Vararg{UState}}, hat::Tuple, s₁, s₂) = step.(P, Xₜ, hat, (s₁,), (s₂, ))
-#step(P::DiscreteProcess, Xₜ::DiscreteState, hat::BackwardGuide, s₁, s₂) = rand(forward(Xₜ, P, s₂ .- s₁) ⊙ hat) #<- Doesn't work
+#step(P::DiscreteProcess, Xₜ::DiscreteState, hat::Guide, s₁, s₂) = rand(forward(Xₜ, P, s₂ .- s₁) ⊙ hat) #<- Doesn't work
 
-
-#####Add MaskedState case(s)######
-
-##################################
 
 """
     gen(P, X0, model, steps; tracker=Returns(nothing), midpoint = false)
@@ -156,13 +92,11 @@ function gen(P::Tuple{Vararg{UProcess}}, X₀::Tuple{Vararg{UState}}, model, ste
     for (s₁, s₂) in zip(steps, steps[begin+1:end])
         t = midpoint ? (s₁ + s₂) / 2 : t = s₁
         hat = resolveprediction(model(t, Xₜ), Xₜ)
-        Xₜ = step(P, Xₜ, hat, s₁, s₂)
-        cmask!(Xₜ, X₀)
+        Xₜ = mask(step(P, Xₜ, hat, s₁, s₂), X₀)
         tracker(t, Xₜ, hat)
     end
     return Xₜ
 end
-
 
 gen(P, X₀, model, args...; kwargs...) = gen((P,), (X₀,), (t, Xₜ) -> (model(t[1], Xₜ[1]),), args...; kwargs...)[1]
 
@@ -183,4 +117,43 @@ end
 
 function stack_tracker(tracker, field; tuple_index = 1)
     return stack([tensor(data[tuple_index]) for data in getproperty(tracker, field)])
+end
+
+
+
+#=If we want the model to directly predict the tangent coordinates, we use:
+- tangent_coordinates outside the gradient call to get the thing the model will predict
+- apply_tangent_coordinates during gen, to provide X̂₁ when the model is predicting the tangent coordinates
+- the loss should just be the mse between the predicted tangent coordinates and the true tangent coordinates
+Note: this gives you an invariance for free, since the model is predicting the change from Xt that results in X1.
+=#
+"""
+    tangent_guide(Xt::ManifoldState, X1::ManifoldState)
+
+Computes the coordinate vector (in the default basis) pointing from `Xt` to `X1`.
+"""
+function tangent_guide(Xt::ManifoldState, X1::ManifoldState; inverse_retraction_method=default_inverse_retraction_method(X1.M))
+    T = eltype(tensor(X1))
+    d = manifold_dimension(X1.M)
+    ξ = zeros(T, d, size(Xt.state)...)
+    temp_retract = inverse_retract(X1.M, Xt.state[1], X1.state[1], inverse_retraction_method)
+    for ind in eachindex(Xt.state)
+        inverse_retract!(X1.M, temp_retract, Xt.state[ind], X1.state[ind], inverse_retraction_method)
+        ξ[:,ind] .= get_coordinates(X1.M, Xt.state[ind], temp_retract)
+    end
+    return ξ
+end
+
+"""
+    apply_tangent_coordinates(Xt::ManifoldState, ξ; retraction_method=default_retraction_method(Xt.M))
+
+returns `X̂₁` where each point is the result of retracting `Xt` by the corresponding tangent coordinate vector `ξ`.
+"""
+function apply_tangent_coordinates(Xt::ManifoldState, ξ; retraction_method=default_retraction_method(Xt.M))
+    X̂₁ = copy(Xt)
+    for ind in eachindex(Xt.state)
+        X = get_vector(Xt.M, Xt.state[ind], ξ[:,ind])
+        retract!(Xt.M, X̂₁.state[ind], Xt.state[ind], X, retraction_method)
+    end
+    return X̂₁
 end

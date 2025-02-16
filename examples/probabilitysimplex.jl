@@ -32,7 +32,7 @@ function (f::PSModel)(t, Xt)
     return reshape(l.decode(x), :, 2, len) .* (1.05f0 .- expand(t, 3))
 end
 
-model = PSModel(embeddim = 256, l = 2, K = 33, layers = 3)
+model = PSModel(embeddim = 128, l = 2, K = 33, layers = 2)
 
 sampleX1(n_samples) = Flowfusion.random_discrete_cat(n_samples)
 sampleX0(n_samples) = rand(25:32, 2, n_samples)
@@ -44,7 +44,7 @@ M = ProbabilitySimplex(32)
 P = ManifoldProcess(0.5f0)
 
 eta = 0.01
-opt_state = Flux.setup(AdamW(eta = eta, lambda = 0.01), model)
+opt_state = Flux.setup(AdamW(eta = eta, lambda = 0.0001), model)
 
 iters = 5000
 for i in 1:iters
@@ -55,7 +55,7 @@ for i in 1:iters
     #Construct the bridge:
     Xt = bridge(P, X0, X1, t)
     #Get the Xt->X1 tangent coordinates:
-    ξ = Flowfusion.tangent_coordinates(Xt, X1)
+    ξ = tangent_guide(Xt, X1)
     #Gradient:
     l,g = Flux.withgradient(model) do m
         tcloss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t))
@@ -76,7 +76,7 @@ end
 n_inference_samples = 5000
 X0 = ManifoldState(T, M, sampleX0(n_inference_samples));
 paths = Tracker()
-X1pred = (t,Xt) -> apply_tangent_coordinates(Xt, model(t,tensor(Xt)))
+X1pred = (t,Xt) -> Guide(model(t,tensor(Xt)))
 samp = gen(P, X0, X1pred, 0f0:0.002f0:1f0, tracker = paths)
 
 #Plot the X0 and generated X1:
