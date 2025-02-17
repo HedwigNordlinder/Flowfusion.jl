@@ -64,10 +64,10 @@ unmask(X) = X
     cmask!(Xt_state, X1_state, cmask)
     cmask!(Xt, X1)
 
-Applies, in place, a conditioning mask, forcing elements (or slices) of `Xt` to be equal to `X1`, where `cmask` is 1.
+Applies, in place, a conditioning mask, where only elements (or slices) of `Xt` where `cmask` is 1 are noised. When `cmask` is 0, the elements are forced to be equal to `X1`.
 """
 function cmask!(Xt_state, X1_state, cmask)
-    endslices(Xt_state,cmask) .= endslices(X1_state,cmask)
+    endslices(Xt_state,.!cmask) .= endslices(X1_state,.!cmask)
     return Xt_state
 end
 
@@ -90,7 +90,7 @@ cmask!(Xt::Tuple, X1::Tuple) = map(cmask!, Xt, X1)
 """
     mask(X, Y)
 
-If `Y` is a `MaskedState`, `mask(X, Y)` returns a `MaskedState` with the content of `X` where elements of `Y.cmask` are 0, and `Y` where `Y.cmask` is 1.
+If `Y` is a `MaskedState`, `mask(X, Y)` returns a `MaskedState` with the content of `X` where elements of `Y.cmask` are 1, and `Y` where `Y.cmask` is 0.
 `cmask` and `lmask` are inherited from `Y`.
 If `Y` is not a `MaskedState`, `mask(X, Y)` returns `X`.
 """
@@ -107,7 +107,8 @@ bridge(P::UProcess, X0, X1::MaskedState, t) = mask(bridge(P, unmask(X0), X1.S, t
 
 #Mask passthroughs, because the masking gets handled elsewhere:
 step(P::UProcess, Xₜ::MaskedState, hat, s₁, s₂) = step(P, unmask(Xₜ), unmask(hat), s₁, s₂) #step is only called in gen, which handles the masking itself
-resolveprediction(X::MaskedState, Xₜ) = resolveprediction(unmask(X), unmask(Xₜ))
+resolveprediction(X, Xₜ) = resolveprediction(unmask(X), unmask(Xₜ))
+#resolveprediction(X, Xₜ::MaskedState) = resolveprediction(unmask(X), unmask(Xₜ))
 
 
 
