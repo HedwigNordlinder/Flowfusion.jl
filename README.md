@@ -111,7 +111,11 @@ pl = scatter(X0.state[1,:],X0.state[2,:], msw = 0, ms = 1, color = "blue", alpha
 X1true = sampleX1(n_inference_samples)
 scatter!(X1true[1,:],X1true[2,:], msw = 0, ms = 1, color = "orange", alpha = 0.5, label = "X1 (true)")
 scatter!(samples.state[1,:],samples.state[2,:], msw = 0, ms = 1, color = "green", alpha = 0.5, label = "X1 (generated)")
+savefig("readmeexamplecat.svg")
 ```
+
+![Image](https://github.com/user-attachments/assets/2c057698-bd1f-4dc1-9aaa-833af8a71196)
+
 
 ## Tracking trajectories
 
@@ -133,3 +137,60 @@ X1true = sampleX1(n_inference_samples)
 scatter!(X1true[1,:],X1true[2,:], msw = 0, ms = 1, color = "orange", alpha = 0.5, label = "X1 (true)")
 scatter!(samples.state[1,:],samples.state[2,:], msw = 0, ms = 1, color = "green", alpha = 0.5, label = "X1 (generated)")
 ```
+![Image](https://github.com/user-attachments/assets/85f3714d-27ba-4683-9c63-2bcb7fcaaf16)
+
+## Variations:
+
+These can be found in [examples](https://github.com/MurrellGroup/Flowfusion.jl/tree/main/examples).
+
+### Flow matching
+
+with `P = Deterministic()`
+
+![Image](https://github.com/user-attachments/assets/e82ac33a-6f28-4731-b39d-8ad9757159f7)
+
+### Flow matching on a manifold
+
+with `P = Deterministic()` and `X0 = ManifoldState(Torus(2), ...)`
+
+![Image](https://github.com/user-attachments/assets/b6a1a27f-f0fc-4bc4-af10-bb8b5e7aa8cf)
+
+### Diffusion on a manifold
+
+with `P = ManifoldProcess(0.2)` and `X0 = ManifoldState(Torus(2), ...)`:
+
+![Image](https://github.com/user-attachments/assets/43a7f061-a95e-44ad-bbb5-631d91633a54)
+
+### Discrete flow matching
+
+with `P = NoisyInterpolatingDiscreteFlow(0.1)` and `X0 = DiscreteState(...)`:
+
+![Image](https://github.com/user-attachments/assets/d9497f36-c87d-4676-915a-5b067d4f486b)
+
+### Partial observation conditioning
+
+with `X0 = MaskedState(state, cmask, lmask)`
+
+![Image](https://github.com/user-attachments/assets/e3e84290-2a57-4d2d-8ebc-ad91800e8fea)
+
+### Discrete distributions via diffusion on the probability simplex
+
+with `P = ManifoldProcess(0.5)` and `X0 = ManifoldState(ProbabilitySimplex(32), ...)`:
+
+<video src="https://github.com/user-attachments/assets/b3692a2f-5d5b-4924-82bb-f5477230b45d" controls></video>
+
+## Literature:
+
+For background reading please see:
+
+- [Denoising Diffusion Probabilistic Models](https://arxiv.org/abs/2006.11239)
+- [Flow Matching for Generative Modeling](https://arxiv.org/abs/2210.02747)
+- [Denoising Diffusion Bridge Models](https://arxiv.org/abs/2309.16948)
+- [Flow matching on general geometries](https://arxiv.org/pdf/2302.03660)
+- [Diffusion on Manifolds](https://arxiv.org/abs/2303.09556)
+- [Flow Matching (a review/guide)](https://arxiv.org/abs/2412.06264)
+- [Discrete Flow Matching](https://arxiv.org/abs/2407.15595)
+
+Except where noted in the code, this package mostly doesn't try and achieve faithful reproductions of approaches described in the literature, and prefers to be inspired by, rather than constrained by, precise mathematical correctness. The main goals are:
+- Bringing a variety of different processes under a single unified and flexible framework
+- Providing processes that work, practically speaking
