@@ -22,8 +22,17 @@ Adapt.adapt_structure(to, S::ForwardBackward.ManifoldState) = ForwardBackward.Ma
 Rerturns a state where `X.state` is a onehot array.
 """
 onehot(X::DiscreteState{<:AbstractArray{<:Integer}}) = DiscreteState(X.K, onehotbatch(X.state, 1:X.K))
-onehot(X::DiscreteState{<:OneHotArray}) = X
-ForwardBackward.stochastic(T::Type, o::DiscreteState{<:OneHotArray}) = CategoricalLikelihood(T.(o.state .+ 0), zeros(T, size(o.state)[2:end]...))
+onehot(X::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = X
+
+"""
+    unhot(X)
+
+Returns a state where `X.state` is not onehot.
+"""
+unhot(X::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = DiscreteState(X.K, onecold(X.state, 1:X.K))
+unhot(X::DiscreteState{<:AbstractArray{<:Integer}}) = X
+ForwardBackward.stochastic(T::Type, o::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = CategoricalLikelihood(T.(o.state .+ 0), zeros(T, size(o.state)[2:end]...))
+#TODO: onehot/unhot for masked state?
 
 """
     dense(X::DiscreteState; T = Float32)
@@ -43,7 +52,9 @@ end
 #Tuple broadcast:
 resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
 #Default if X̂₁ is a plain tensor:
-resolveprediction(X̂₁, Xₜ::DiscreteState) = copytensor!(stochastic(Xₜ), X̂₁) #Returns a Likelihood
+resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = copytensor!(stochastic(Xₜ), X̂₁) #Returns a Likelihood
+resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = copytensor!(stochastic(unhot(Xₜ)), X̂₁) #Probably inefficient
+
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
 #Passthrough if the user returns a State or Likelihood
 resolveprediction(X̂₁::State, Xₜ) = X̂₁
@@ -72,11 +83,17 @@ function bridge(P::UProcess, X0, X1, t0, t)
 end
 bridge(P, X0, X1, t) = bridge(P, X0, X1, eltype(t)(0.0), t)
 bridge(P::Tuple{Vararg{UProcess}}, X0::Tuple{Vararg{UState}}, X1::Tuple, t0, t) = bridge.(P, X0, X1, (t0,), (t, ))
+bridge(P::Tuple{Vararg{UProcess}}, X0::Tuple{Vararg{UState}}, X1::Tuple, t) = bridge.(P, X0, X1, (t, ))
 
 #Step is like bridge (and falls back to where possible). But sometimes we only have enough to take an Euler step (which is ok when `s₂-s₁` is small).
 step(P, Xₜ, hat, s₁, s₂) = bridge(P, Xₜ, hat, s₁, s₂)
 step(P::Tuple{Vararg{UProcess}}, Xₜ::Tuple{Vararg{UState}}, hat::Tuple, s₁, s₂) = step.(P, Xₜ, hat, (s₁,), (s₂, ))
-#step(P::DiscreteProcess, Xₜ::DiscreteState, hat::Guide, s₁, s₂) = rand(forward(Xₜ, P, s₂ .- s₁) ⊙ hat) #<- Doesn't work
+
+#Bridge/step overload for onehot discrete states - if either is onehot, the result will be onehot
+bridge(P::ConvexInterpolatingDiscreteFlow, X0::Union{DiscreteState, DiscreteState{<:Union{OneHotArray, OneHotMatrix}}}, X1::Union{DiscreteState, DiscreteState{<:Union{OneHotArray, OneHotMatrix}}}, t) = onehot(bridge(P, unhot(X0), unhot(X1), t))
+step(P::ConvexInterpolatingDiscreteFlow, Xₜ::Union{DiscreteState, DiscreteState{<:Union{OneHotArray, OneHotMatrix}}}, hat, s₁, s₂) = onehot(step(P, unhot(Xₜ), hat, s₁, s₂))
+
+Base.copy(X::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = onehot(copy(unhot(X)))
 
 
 """
@@ -98,6 +115,7 @@ function gen(P::Tuple{Vararg{UProcess}}, X₀::Tuple{Vararg{UState}}, model, ste
     return Xₜ
 end
 
+#                                                                         t[1]? or just t?
 gen(P, X₀, model, args...; kwargs...) = gen((P,), (X₀,), (t, Xₜ) -> (model(t[1], Xₜ[1]),), args...; kwargs...)[1]
 
 struct Tracker <: Function
@@ -121,6 +139,10 @@ end
 
 
 
+Guide(Xt::ManifoldState, X1::ManifoldState; kwargs...) = Guide(tangent_guide(Xt, X1; kwargs...))
+#MaskedState needs to be tested. Current setup disallows X1 being masked but Xt not.
+Guide(mXt::Union{MaskedState{<:ManifoldState}, ManifoldState}, mX1::MaskedState{<:ManifoldState}; kwargs...) = Guide(tangent_guide(mXt, mX1; kwargs...), mX1.cmask, mX1.lmask)
+
 #=If we want the model to directly predict the tangent coordinates, we use:
 - tangent_coordinates outside the gradient call to get the thing the model will predict
 - apply_tangent_coordinates during gen, to provide X̂₁ when the model is predicting the tangent coordinates
@@ -132,7 +154,9 @@ Note: this gives you an invariance for free, since the model is predicting the c
 
 Computes the coordinate vector (in the default basis) pointing from `Xt` to `X1`.
 """
-function tangent_guide(Xt::ManifoldState, X1::ManifoldState; inverse_retraction_method=default_inverse_retraction_method(X1.M))
+function tangent_guide(mXt::Union{MaskedState, ManifoldState}, mX1::Union{MaskedState, ManifoldState}; inverse_retraction_method=default_inverse_retraction_method(unmask(mX1).M))
+    Xt = unmask(mXt)
+    X1 = unmask(mX1)
     T = eltype(tensor(X1))
     d = manifold_dimension(X1.M)
     ξ = zeros(T, d, size(Xt.state)...)

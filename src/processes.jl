@@ -1,6 +1,7 @@
 ##########################################
 #For processes that aren't used elsewhere
 ##########################################
+
 """
     InterpolatingDiscreteFlow(κ::Function, κ̇::Function)
     InterpolatingDiscreteFlow() - Uses default Cosine scheduler.
@@ -10,14 +11,11 @@ A Discrete process that interpolates between two states (equation 9 from https:/
 κ controls the interpolation schedule, κ̇ is the derivative of κ.
 Works when model predicts `X̂₁` with cross-entropy loss (`floss` will do this).
 """
-struct InterpolatingDiscreteFlow <: DiscreteProcess
-    κ::Function
-    κ̇::Function
-end
 
 InterpolatingDiscreteFlow() = InterpolatingDiscreteFlow(t -> 1-cos((pi/2)*t), t -> (pi/2)*sin((pi/2)*t))
 
-function bridge(p::InterpolatingDiscreteFlow, x0::DiscreteState, x1::DiscreteState, t)
+#The weird type sig here is to avoid dispatch on onehot arrays.
+function bridge(p::InterpolatingDiscreteFlow, x0::DiscreteState{<:AbstractArray{<:Signed}}, x1::DiscreteState{<:AbstractArray{<:Signed}}, t)
     ts = expand(t, ndims(x0.state))
     i = p.κ.(ts) .≥ rand(size(x0.state)...)
     xt = copy(x0)
@@ -25,7 +23,7 @@ function bridge(p::InterpolatingDiscreteFlow, x0::DiscreteState, x1::DiscreteSta
     return xt
 end
 
-function step(P::InterpolatingDiscreteFlow, Xₜ::DiscreteState, X̂₁, s₁, s₂)
+function step(P::InterpolatingDiscreteFlow, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}, X̂₁, s₁, s₂)
     step = s₂ .- s₁
     ohXₜ = onehot(Xₜ)
     velo = (P.κ̇.(s₁) ./ (1 - P.κ.(s₁))) .* (tensor(X̂₁) - tensor(ohXₜ))
@@ -46,12 +44,6 @@ Compared to InterpolatingDiscreteFlow, it encourages the model to make multiple 
 dκ₁, dκ₂ are the derivatives of κ₁, κ₂.
 Defaults to using a cosine schedule.
 """
-struct NoisyInterpolatingDiscreteFlow <: DiscreteProcess
-    κ₁::Function    # schedule for target token interpolation
-    κ₂::Function    # schedule for uniform noise probability
-    dκ₁::Function   # derivative of κ₁
-    dκ₂::Function   # derivative of κ₂
-end
 
 NoisyInterpolatingDiscreteFlow(noise) = NoisyInterpolatingDiscreteFlow(
     t -> oftype(t,(1 - cos((π/2)*t))),
@@ -61,7 +53,7 @@ NoisyInterpolatingDiscreteFlow(noise) = NoisyInterpolatingDiscreteFlow(
 )
 NoisyInterpolatingDiscreteFlow() = NoisyInterpolatingDiscreteFlow(0.2)
 
-function bridge(p::NoisyInterpolatingDiscreteFlow, x0::DiscreteState, x1::DiscreteState, t)
+function bridge(p::NoisyInterpolatingDiscreteFlow, x0::DiscreteState{<:AbstractArray{<:Signed}}, x1::DiscreteState{<:AbstractArray{<:Signed}}, t)
     D = size(x0.state)
     ts = expand(t, ndims(x0.state))
     Xt = copy(x0)
@@ -80,7 +72,7 @@ function bridge(p::NoisyInterpolatingDiscreteFlow, x0::DiscreteState, x1::Discre
     return Xt
 end
 
-function step(P::NoisyInterpolatingDiscreteFlow, Xₜ::DiscreteState, X̂₁, s₁, s₂)
+function step(P::NoisyInterpolatingDiscreteFlow, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}, X̂₁, s₁, s₂)
     T = eltype(s₁)
     Δt = s₂ .- s₁
     ohXₜ = onehot(Xₜ)

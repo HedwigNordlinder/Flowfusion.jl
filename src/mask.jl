@@ -9,8 +9,6 @@ This dictates the behavior of the masking:
 - When gen is called, the state and mask will be propogated from X0 through all of the Xts.
 =#####################
 
-Adapt.adapt_structure(to, MS::MaskedState{<:State}) = MaskedState(Adapt.adapt(to, MS.S), Adapt.adapt(to, MS.cmask), Adapt.adapt(to, MS.lmask))
-Adapt.adapt_structure(to, MS::MaskedState{<:CategoricalLikelihood}) = MaskedState(Adapt.adapt(to, MS.S), Adapt.adapt(to, MS.cmask), Adapt.adapt(to, MS.lmask))
 
 #import Base.copy
 ForwardBackward.tensor(X::MaskedState) = tensor(X.S)
@@ -41,6 +39,10 @@ ForwardBackward.stochastic(T::Type, o::MaskedState) = MaskedState(stochastic(T, 
 
 getlmask(X1::UState) = X1.lmask
 getlmask(X1::State) = nothing
+getcmask(X1::UState) = X1.cmask
+getcmask(X1::State) = nothing
+getlmask(ξ::Guide) = ξ.lmask
+getcmask(ξ::Guide) = ξ.cmask
 
 """
     unwrap(X)
@@ -71,6 +73,16 @@ function cmask!(Xt_state, X1_state, cmask)
     return Xt_state
 end
 
+#THIS IS NOT MODIFYING - NEED TO RETHINK
+#=
+function cmask!(ohXt_state::Union{OneHotArray, OneHotMatrix}, ohX1_state::Union{OneHotArray, OneHotMatrix}, cmask)
+    K = size(ohXt_state, 1)
+    Xt_state, X1_state = onecold(ohXt_state, 1:K), onecold(ohX1_state, 1:K)
+    endslices(Xt_state,.!cmask) .= endslices(X1_state,.!cmask)
+    return onehotbatch(Xt_state, 1:K)
+end
+=#
+
 cmask!(Xt::Union{State, MaskedState{<:State}}, X1::MaskedState{<:StateLikelihood}) = error("Cannot condition a state on a Likelihood")
 
 #=
@@ -97,10 +109,16 @@ If `Y` is not a `MaskedState`, `mask(X, Y)` returns `X`.
 mask(Xt::Tuple, X1::Tuple) = map(mask, Xt, X1)
 mask(Xt::State, X1::State) = Xt
 mask(Xt::StateLikelihood, X1::StateLikelihood) = Xt
+
 function mask(Xt, X1::MaskedState)
     cmask!(unwrap(Xt), unwrap(X1), X1.cmask)
     return MaskedState(unmask(Xt), X1.cmask, X1.lmask)
 end
+
+#Needed custom handling for onehots:
+unhot(X::MaskedState{<:DiscreteState{<:Union{OneHotArray, OneHotMatrix}}}) = MaskedState(unhot(X.S), X.cmask, X.lmask)
+unhot(X) = X
+mask(Xt, X1::MaskedState{<:DiscreteState{<:Union{OneHotArray, OneHotMatrix}}}) = onehot(mask(unhot(Xt), unhot(X1)))
 
 bridge(P::UProcess, X0, X1::MaskedState, t0, t) = mask(bridge(P, unmask(X0), X1.S, t0, t), X1)
 bridge(P::UProcess, X0, X1::MaskedState, t) = mask(bridge(P, unmask(X0), X1.S, t), X1)
@@ -110,7 +128,7 @@ step(P::UProcess, Xₜ::MaskedState, hat, s₁, s₂) = step(P, unmask(Xₜ), un
 resolveprediction(X, Xₜ) = resolveprediction(unmask(X), unmask(Xₜ))
 #resolveprediction(X, Xₜ::MaskedState) = resolveprediction(unmask(X), unmask(Xₜ))
 
-
+print("?")
 
 #REMOVE?:
 #⊙ itself doesn't force the masks - it just propogates them. The forcing happens elsewhere.

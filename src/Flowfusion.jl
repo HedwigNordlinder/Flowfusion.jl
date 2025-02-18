@@ -2,6 +2,7 @@
 Need to test/do:
 Urgent:
 - Test tuples!
+- Test Manifolds with masking (especially tangent_guide and apply_tangent etc) 
 - Masking (cmask) on all state types for bridge and gen
 - Masking (lmask) on all state types for both losses
 - tensor on masked states
@@ -42,6 +43,7 @@ export
     Tracker,
     stack_tracker,
     onehot,
+    unhot,
     FProcess, 
     floss,
     tcloss,

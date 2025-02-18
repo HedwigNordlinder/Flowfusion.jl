@@ -54,10 +54,11 @@ for i in 1:iters
     #Construct the bridge:
     Xt = bridge(P, X0, X1, t)
     #Compute the tangent coordinates:
-    ξ = tangent_guide(Xt, X1)
+    ξ = Guide(Xt, X1)
     #Gradient
     l,g = Flux.withgradient(model) do m
-        tcloss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t))
+        #tcloss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t)) #GOING TO HAVE TO ADD GUIDE HERE, AND CHANGE IT TO FLOSS
+        floss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t)) #GOING TO HAVE TO ADD GUIDE HERE, AND CHANGE IT TO FLOSS
     end
     #Update
     Flux.update!(opt_state, model, g[1])
