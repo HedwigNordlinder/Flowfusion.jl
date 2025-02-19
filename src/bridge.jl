@@ -32,7 +32,6 @@ Returns a state where `X.state` is not onehot.
 unhot(X::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = DiscreteState(X.K, onecold(X.state, 1:X.K))
 unhot(X::DiscreteState{<:AbstractArray{<:Integer}}) = X
 ForwardBackward.stochastic(T::Type, o::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = CategoricalLikelihood(T.(o.state .+ 0), zeros(T, size(o.state)[2:end]...))
-#TODO: onehot/unhot for masked state?
 
 """
     dense(X::DiscreteState; T = Float32)
@@ -138,9 +137,8 @@ function stack_tracker(tracker, field; tuple_index = 1)
 end
 
 
-
+#Todo: tesst Guide with MaskedState
 Guide(Xt::ManifoldState, X1::ManifoldState; kwargs...) = Guide(tangent_guide(Xt, X1; kwargs...))
-#MaskedState needs to be tested. Current setup disallows X1 being masked but Xt not.
 Guide(mXt::Union{MaskedState{<:ManifoldState}, ManifoldState}, mX1::MaskedState{<:ManifoldState}; kwargs...) = Guide(tangent_guide(mXt, mX1; kwargs...), mX1.cmask, mX1.lmask)
 
 #=If we want the model to directly predict the tangent coordinates, we use:

@@ -1,16 +1,13 @@
-#Need to test key mask functions on ContinuousState, DiscreteState, CategoricalLikelihood, ManifoldState
-
 #=#####################
 Conditioning mask behavior:
 The typical use is that it makes sense, during training, to construct the conditioning mask on the training observation, X1.
 During inference, the conditioning mask (and conditioned-upon state) has to be present on X1.
 This dictates the behavior of the masking:
-- When bridge() is called, the mask, and the state where mask=1, are inherited from X1.
+- When bridge() is called, the mask, and the state where mask=0, are inherited from X1.
 - When gen is called, the state and mask will be propogated from X0 through all of the Xts.
 =#####################
 
 
-#import Base.copy
 ForwardBackward.tensor(X::MaskedState) = tensor(X.S)
 Base.copy(X::MaskedState) = MaskedState(copy(X.S), copy(X.cmask), copy(X.lmask))
 
@@ -22,20 +19,8 @@ For example, if `m` is a boolean array, then `size(a)[ndims(a)-ndims(m):end] == 
 """
 endslices(a,m) = @view a[ntuple(Returns(:),ndims(a)-ndims(m))...,m]
 
-
-#=
-Need to handle:
-Xt = stochastic(Float32, bridge(P, X0, X1, t))
-which means "stochastic" needs to preserve mask, and CategoricalLikelihoods need to be able to be masked.
-onehot too
-=#
-
-
-
 onehot(X::MaskedState{<:DiscreteState{<:AbstractArray{<:Integer}}}) = MaskedState(onehot(X.S), X.cmask, X.lmask)
 ForwardBackward.stochastic(T::Type, o::MaskedState) = MaskedState(stochastic(T, o.S), o.cmask, o.lmask)
-
-
 
 getlmask(X1::UState) = X1.lmask
 getlmask(X1::State) = nothing
@@ -73,31 +58,7 @@ function cmask!(Xt_state, X1_state, cmask)
     return Xt_state
 end
 
-#THIS IS NOT MODIFYING - NEED TO RETHINK
-#=
-function cmask!(ohXt_state::Union{OneHotArray, OneHotMatrix}, ohX1_state::Union{OneHotArray, OneHotMatrix}, cmask)
-    K = size(ohXt_state, 1)
-    Xt_state, X1_state = onecold(ohXt_state, 1:K), onecold(ohX1_state, 1:K)
-    endslices(Xt_state,.!cmask) .= endslices(X1_state,.!cmask)
-    return onehotbatch(Xt_state, 1:K)
-end
-=#
-
 cmask!(Xt::Union{State, MaskedState{<:State}}, X1::MaskedState{<:StateLikelihood}) = error("Cannot condition a state on a Likelihood")
-
-#=
-function cmask!(Xt::MaskedState, X1::MaskedState)
-    cmask!(Xt.S.state, X1.S.state, X1.cmask)
-    size(Xt.cmask) != size(X1.cmask) && error("cmask dimensions must match")
-    Xt.cmask .= X1.cmask
-    return Xt
-end
-
-cmask!(Xt_state, X1_state, cmask::Nothing) = Xt_state
-cmask!(Xt, X1::State) = Xt
-cmask!(Xt, X1::StateLikelihood) = Xt
-cmask!(Xt::Tuple, X1::Tuple) = map(cmask!, Xt, X1)
-=#
 
 """
     mask(X, Y)
@@ -126,10 +87,4 @@ bridge(P::UProcess, X0, X1::MaskedState, t) = mask(bridge(P, unmask(X0), X1.S, t
 #Mask passthroughs, because the masking gets handled elsewhere:
 step(P::UProcess, Xₜ::MaskedState, hat, s₁, s₂) = step(P, unmask(Xₜ), unmask(hat), s₁, s₂) #step is only called in gen, which handles the masking itself
 resolveprediction(X, Xₜ) = resolveprediction(unmask(X), unmask(Xₜ))
-#resolveprediction(X, Xₜ::MaskedState) = resolveprediction(unmask(X), unmask(Xₜ))
 
-print("?")
-
-#REMOVE?:
-#⊙ itself doesn't force the masks - it just propogates them. The forcing happens elsewhere.
-#ForwardBackward.:⊙(a::MaskedState, b::MaskedState; kwargs...) = MaskedState(⊙(a.S, b.S; kwargs...), a.cmask .* b.cmask, a.lmask .* b.lmask)

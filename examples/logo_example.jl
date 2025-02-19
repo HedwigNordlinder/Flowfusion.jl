@@ -54,17 +54,18 @@ ManifoldState(M, Array{Float32}.(rand(M, n_samples)))
 sampleX0(n_samples) = ContinuousState(T.(stack(rand(flowinds,   n_samples))) .+ rand(T, 2, n_samples) .* 0.01f0), ManifoldState(M, fill([0.6f0], n_samples))
 sampleX1(n_samples) = ContinuousState(T.(stack(rand(fusioninds, n_samples))) .+ rand(T, 2, n_samples) .* 0.01f0), ManifoldState(M, fill([-2.54159f0], n_samples))
 
-model = FModel(embeddim = 384, layers = 5)
+model = FModel(embeddim = 512, layers = 5)
 n_samples = 500
 
 #The process:
 P = (BrownianMotion(0.05f0), ManifoldProcess(0.1f0))
+#P = (Deterministic(), ManifoldProcess(0.1f0))
 
 #Optimizer:
 eta = 0.001
 opt_state = Flux.setup(AdamW(eta = eta, lambda = 0.001), model)
 
-iters = 6000
+iters = 10000
 for i in 1:iters
     #Set up a batch of training pairs, and t, where X1 is a MaskedState: 
     X0 = sampleX0(n_samples)
@@ -82,8 +83,8 @@ for i in 1:iters
     Flux.update!(opt_state, model, g[1])
     #Logging, and lr cooldown:
     if i % 10 == 0
-        if i > iters - 2000
-            eta *= 0.975
+        if i > iters - 3000
+            eta *= 0.98
             Optimisers.adjust!(opt_state, eta)
         end
         println("i: $i; Loss: $l; eta: $eta")
@@ -106,8 +107,6 @@ astate = tensor(samp[2])
 zcstate = tensor(X0[1])
 zastate = tensor(X0[2])
 
-#scatter(zcstate[1,:], zcstate[2,:], msw = 0, ms = 1.5, markerz = zastate[1,:], cmap = :hsv)
-#scatter!(cstate[1,:], cstate[2,:], msw = 0, ms = 1.5, markerz = astate[1,:], cmap = :hsv)
 scatter(zcstate[1,:], zcstate[2,:], msw = 0, ms = 1.5, markerz = zastate[1,:], cmap = :hsv, label = :none, xlim = (-0.5, 5.5), ylim = (-1.5, 1.5))
 scatter!(cstate[1,:], cstate[2,:], msw = 0, ms = 1.5, markerz = astate[1,:], cmap = :hsv, label = :none, xlim = (-0.5, 5.5), ylim = (-1.5, 1.5))
 scatter!([-100,-100],[-100,-100], markerz = [-pi,pi], label = :none, colorbar = :none, axis=([], false))

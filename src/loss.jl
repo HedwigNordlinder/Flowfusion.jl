@@ -1,24 +1,3 @@
-#=######
-NOTES on what works:
-- Euclidean state:
-- - any compatible process, using floss
-- Manifold state:
-- - any compatible process, using tcloss
-- Discrete state:
-- - for a DiscreteProcess, only UniformUnmasking works properly. The rest have issues.
-- - works to using the ProbabilitySimplex in a ManifoldProcess.
-- - Either:
-- - - The process must have non-zero variance
-- - - or X0 must be a continuous distribution (ie. not discrete "corners") on the ProbabilitySimplex (in which case a deterministic process also works)
-=#######
-
-#This is badness that doesn't work:
-#rotangle(rots::AbstractArray{T,3}) where T = acos.(clamp.((rots[1,1,:] .+ rots[2,2,:] .+ rots[3,3,:] .- 1) ./ 2, T(-0.99), T(0.99)))
-#rotangle(rots::AbstractArray) = reshape(rotangle(reshape(rots, 3, 3, :)), 1, size(rots)[3:end]...)
-#torangle(x, y) = mod.(y .- x .+ π, 2π) .- π
-#msra(X̂₁, X₁) = rotangle(batched_mul(batched_transpose(tensor(X̂₁)), tensor(X₁))).^2 #Mean Squared Angle
-#msta(X̂₁, X₁) = sum(torangle(tensor(X̂₁), tensor(X₁)), dims=1).^2 #Mean Squared Toroidal Angle
-
 mse(X̂₁, X₁) = abs2.(tensor(X̂₁) .- tensor(X₁)) #Mean Squared Error
 lce(X̂₁, X₁) = -sum(tensor(X₁) .* logsoftmax(tensor(X̂₁)), dims=1) #Logit Cross Entropy
 kl(P,Q) = sum(softmax(tensor(P)) .* (logsoftmax(tensor(P)) .- log.(tensor(Q))), dims=1) #Kullback-Leibler Divergence
@@ -55,45 +34,11 @@ floss(P::fbu(ManifoldProcess{<:Euclidean}), X̂₁, X₁::msu(ContinuousState), 
 #For a discrete process, X̂₁ will be a distribution, and X₁ will have to be a onehot before going onto the gpu.
 floss(P::fbu(DiscreteProcess), X̂₁, X₁::msu(DiscreteState{<:AbstractArray{<:Integer}}), c) = error("X₁ needs to be onehot encoded with `onehot(X₁)`. You might need to do this before moving it to the GPU.")
 floss(P::fbu(DiscreteProcess), X̂₁, X₁::msu(DiscreteState{<:OneHotArray}), c) = scaledmaskedmean(lce(X̂₁, X₁), c, getlmask(X₁))
-#floss(P::fbu(ManifoldProcess{Rotations(3)}), X̂₁, X₁::msu(ManifoldState{Rotations(3)}), c) = scaledmaskedmean(msra(X̂₁, X₁), c, getlmask(X₁))
-#floss(P::fbu(ManifoldProcess{SpecialOrthogonal(3)}), X̂₁, X₁::msu(ManifoldState{SpecialOrthogonal(3)}), c) = scaledmaskedmean(msra(X̂₁, X₁), c, getlmask(X₁))
-#floss(P::fbu(ManifoldProcess), X̂₁, X₁::msu(ManifoldState{<:Torus}), c) = scaledmaskedmean(msta(X̂₁, X₁), c, getlmask(X₁))
-
 floss(P::Tuple, X̂₁::Tuple, X₁::Tuple, c::Union{AbstractArray, Real}) = sum(floss.(P, X̂₁, X₁, (c,)))
 floss(P::Tuple, X̂₁::Tuple, X₁::Tuple, c::Tuple) = sum(floss.(P, X̂₁, X₁, c))
+floss(P::Union{fbu(ManifoldProcess), fbu(Deterministic)}, ξhat, ξ::Guide, c) = scaledmaskedmean(mse(ξhat, ξ.H), c, getlmask(ξ))
 
 #I should make a self-balancing loss that tracks the running mean/std and adaptively scales to balance against target weights.
-
-"""
-    tcloss(P::Union{fbu(ManifoldProcess), fbu(Deterministic)}, ξhat, ξ, c, mask = nothing)
-
-Where `ξhat` is the predicted tangent coordinates, and `ξ` is the true tangent coordinates.
-"""
-floss(P::Union{fbu(ManifoldProcess), fbu(Deterministic)}, ξhat, ξ::Guide, c) = scaledmaskedmean(mse(ξhat, ξ.H), c, getlmask(ξ))
-#tcloss(P::fbu(DiscreteProcess), ξhat, ξ, c, mask = nothing) = scaledmaskedmean(rkl(ξhat, ξ), c, mask)
-
-
-
-
-#=
-#Doesn't help to do it this way
-"""
-    tangent_coordinates(P::DiscreteProcess, Xt::DiscreteState, X1)
-
-Computes (a weighted mixture of) Doob's h-transform(s) that would condition the current state Xt (which must be a discrete value)
-to end at X1 (which can be a distribution) under P. Maybe.
-"""
-function tangent_coordinates(P::DiscreteProcess, X1::DiscreteState, t)
-    #(for a single column) for state=i at 1-t, H_j(t)/H_i(t) is the rate scaling ratio per Doob's h-transform.
-    #If the model can learn this directly, we can gen.
-    H = backward(X1, P, 1 .- t)
-    scale = sum(H.dist, dims = 1)
-    H.dist ./= scale
-    return H
-end
-=#
-
-
 
 ########################################################################
 #Manifold-specific helper functions

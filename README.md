@@ -5,11 +5,12 @@
 [![Build Status](https://github.com/MurrellGroup/Flowfusion.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/MurrellGroup/Flowfusion.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/MurrellGroup/Flowfusion.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/MurrellGroup/Flowfusion.jl)
 
-![Image](https://github.com/user-attachments/assets/f2754ba5-b798-4db9-8ce6-a0324b89a534)
-
 Flowfusion.jl is a Julia package for training and sampling from diffusion and flow matching models (and some things in between), across continuous, discrete, and manifold spaces, all in a single unified framework and interface.
 
-The animated shows samples from a model trained to steer a coupled 2D Brownian bridge diffusion in space, with an angular diffusion in hue. The hue endpoints are antipodal, and you can see both paths, in opposite angular directions, are sampled.
+![Image](https://github.com/user-attachments/assets/d739c07e-f9e9-4aef-932e-c36cae182391)
+![Image](https://github.com/user-attachments/assets/f2754ba5-b798-4db9-8ce6-a0324b89a534)
+
+The animated logo shows samples from a model trained to jointly transport a 2D point and an angular hue between two distributions. For the 2D point, the left side uses "Flow matching" with deterministic trajectories, and the right uses a Brownian bridge. For both sides, the angular hue is diffused via an angular Brownian bridge. The hue endpoints are antipodal, and you can see both paths, in opposite angular directions, are sampled.
 
 ## Features
 
