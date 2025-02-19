@@ -2,6 +2,13 @@
 #For processes that aren't used elsewhere
 ##########################################
 
+##########################################
+#https://arxiv.org/pdf/2407.15595
+##########################################
+
+#Note to future self: if I ever use the probability velocity trick for one of the regular discrete CTMCs (thus turning it into a ConvexInterpolatingDiscreteFlow), I'll need to handle the FProcess schedule a little differently.
+FProcess(p::ConvexInterpolatingDiscreteFlow, f) = Error("ConvexInterpolatingDiscreteFlow have their own schedule mechanisms. Do not use them with FProcess.")
+
 """
     InterpolatingDiscreteFlow(κ::Function, κ̇::Function)
     InterpolatingDiscreteFlow() - Uses default Cosine scheduler.

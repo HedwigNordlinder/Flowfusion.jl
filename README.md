@@ -13,11 +13,12 @@ The animated logo shows samples from a model trained to jointly transport a 2D p
 
 ## Features
 
-- Controllable noise (or fully deterministic for flow matching)
 - Flexible initial $X_0$ distribution
 - Conditioning via masking
 - States: Continuous, discrete, and a wide variety of manifolds supported (via [Manifolds.jl](https://github.com/JuliaManifolds/Manifolds.jl))
 - Compound states supported (e.g. jointly sampling from both continuous and discrete variables)
+- Controllable noise (or fully deterministic for flow matching)
+- Time-scaling schedules (see `examples/logo_example.jl`)
 
 ### Basic idea:
 - Generate `X0` and `X1` states from your favorite distribution, and a random `t` between 0 and 1

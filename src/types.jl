@@ -50,7 +50,7 @@ Adapt.adapt_structure(to, G::Guide) = Guide(Adapt.adapt(to, G.H), Adapt.adapt(to
 UState = Union{State,MaskedState, Guide}
 
 #This is for all Flow types where the mixture probabilities are directly defined, and the gen is done via probability velocities.
-abstract type ConvexInterpolatingDiscreteFlow <: DiscreteProcess end
+abstract type ConvexInterpolatingDiscreteFlow <: DiscreteProcess end #https://arxiv.org/pdf/2407.15595
 
 struct InterpolatingDiscreteFlow <: ConvexInterpolatingDiscreteFlow
     κ::Function
