@@ -13,7 +13,7 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
 Adapt = "4.1.1"
-ForwardBackward = "1.0.0"
+ForwardBackward = "0.1.0"
 Manifolds = "0.10.12"
 NNlib = "0.9.27"
 OneHotArrays = "0.2.6"

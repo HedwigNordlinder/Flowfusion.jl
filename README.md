@@ -1,4 +1,6 @@
-# Flowfusion
+# Flowfusion.jl
+
+![Image](https://github.com/user-attachments/assets/f2754ba5-b798-4db9-8ce6-a0324b89a534)
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://MurrellGroup.github.io/Flowfusion.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://MurrellGroup.github.io/Flowfusion.jl/dev/)
@@ -7,7 +9,7 @@
 
 
 
-Flowfusion is a Julia package for training and sampling from diffusion and flow matching models (and some things in between), across continuous, discrete, and manifold spaces. It provides a unified framework for:
+Flowfusion.jl is a Julia package for training and sampling from diffusion and flow matching models (and some things in between), across continuous, discrete, and manifold spaces, all in a single unified framework and interface.
 
 ## Features
 

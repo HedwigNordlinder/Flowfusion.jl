@@ -47,19 +47,19 @@ P = NoisyInterpolatingDiscreteFlow(0.1)
 model = DModel(embeddim = 128, l = 2, K = 33, layers = 2)
 
 eta = 0.005
-opt_state = Flux.setup(Adam(eta), model)
+opt_state = Flux.setup(AdamW(eta = eta, lambda = 0.0001), model)
 
-iters = 4000
+iters = 400
 for i in 1:iters
     #Set up a batch of training pairs, and t
-    X1 = DiscreteState(33, sampleX1(n_samples))
-    X0 = DiscreteState(33, sampleX0(n_samples))
+    X1 = onehot(DiscreteState(33, sampleX1(n_samples)))
+    X0 = onehot(DiscreteState(33, sampleX0(n_samples)))
     t = rand(T, 1, n_samples)
     #Construct the bridge:
-    Xt = stochastic(Float32, bridge(P, X0, X1, t))
+    Xt = dense(bridge(P, X0, X1, t)) #Zygote doesn't like the onehot input, so we make it dense.
     #Gradient
     l,g = Flux.withgradient(model) do m
-        floss(P, m(t,Xt), onehot(X1), t) #CE loss - Scaling with t doesn't seem critical for this one
+        floss(P, m(t,Xt), X1, scalefloss(P,t,1)) #I prefer pow = 1 for discrete.
     end
     #Update
     Flux.update!(opt_state, model, g[1])
@@ -72,10 +72,11 @@ for i in 1:iters
     end
 end
 
+
 n_inference_samples = 10000
 X0 = DiscreteState(33, sampleX0(n_inference_samples))
 paths = Tracker()
-samp = gen(P, X0, (t,Xt) -> softmax(model(t,onehot(Xt))), 0f0:0.001f0:1f0, tracker = paths) #Note the softmax here
+@time samp = gen(P, X0, (t,Xt) -> softmax(model(t,onehot(Xt))), 0f0:0.01f0:1f0, tracker = paths) #<- Note the softmax, and onehot here
 
 pl = scatter(X0.state[1,:],X0.state[2,:], msw = 0, color = "blue", alpha = 0.4, label = "Initial", size = (400,400), legend = :topleft, xlim = (1,33), ylim = (1,33))
 scatter!(samp.state[1,:],samp.state[2,:], msw = 0, color = "green", alpha = 0.04, label = :none)
@@ -88,4 +89,11 @@ end
 plot!([-10],[-10], color = "red", label = "Trajectory", alpha = 0.4)
 pl
 savefig("discrete_$P.svg")
+
+#=
+#Another way to do this is to make the X0 onehot, and then it'll stay onehot through the gen:
+X0 = onehot(DiscreteState(33, sampleX0(n_inference_samples)))
+paths = Tracker()
+@time samp = gen(P, X0, (t,Xt) -> softmax(model(t,Xt)), 0f0:0.01f0:1f0, tracker = paths)
+=#
 
