@@ -7,8 +7,7 @@
 
 Flowfusion.jl is a Julia package for training and sampling from diffusion and flow matching models (and some things in between), across continuous, discrete, and manifold spaces, all in a single unified framework and interface.
 
-![Image](https://github.com/user-attachments/assets/d739c07e-f9e9-4aef-932e-c36cae182391)
-![Image](https://github.com/user-attachments/assets/f2754ba5-b798-4db9-8ce6-a0324b89a534)
+![Image](https://github.com/user-attachments/assets/ff7f25e6-441d-4840-ac9c-a849e7b57aa7)
 
 The animated logo shows samples from a model trained to jointly transport a 2D point and an angular hue between two distributions. For the 2D point, the left side uses "Flow matching" with deterministic trajectories, and the right uses a Brownian bridge. For both sides, the angular hue is diffused via an angular Brownian bridge. The hue endpoints are antipodal, and you can see both paths, in opposite angular directions, are sampled.
 
