@@ -16,7 +16,7 @@ using ForwardBackward
         XDL() = CategoricalLikelihood(rand(5, siz...))
         XGL() = GaussianLikelihood(randn(5, siz...), randn(5, siz...), zeros(siz...))
 
-        for f in [XC, XD, XT, XR, XDL, XGL]
+        for f in [XC, XD, XT, XR, XDL, XGL] 
             Xa = f()
             Xb = f()
             Xc = Flowfusion.mask(Xa, Xb)
@@ -30,7 +30,7 @@ using ForwardBackward
 
             @test typeof(Xc) == typeof(XM) #If you mask a regular State with a MaskedState, the result is a MaskedState.
             d = (tensor(Xb) .- tensor(Xc))
-            @test isapprox(sum(d .* expand(m, ndims(d))),0)
+            @test isapprox(sum(d .* expand(.!m, ndims(d))),0)
 
             m = rand(Bool, siz...)
             Xa = MaskedState(f(), m, m)
@@ -38,7 +38,7 @@ using ForwardBackward
             Xc = Flowfusion.mask(Xa, Xb)
             @test typeof(Xc) == typeof(Xa)
             d = (tensor(Xb) .- tensor(Xc))
-            @test isapprox(sum(d .* expand(m, ndims(d))),0)
+            @test isapprox(sum(d .* expand(.!m, ndims(d))),0)
         end
     end
 
@@ -62,11 +62,11 @@ using ForwardBackward
             m = rand(Bool, siz...)
             XM = MaskedState(Xb, m, m)
             Xt = Flowfusion.bridge(p, Xa, XM, 0.1)
-            @assert typeof(Xt) == typeof(XM)
+            @test typeof(Xt) == typeof(XM)
             if !(p isa InterpolatingDiscreteFlow)
-                @assert isapprox(sum((tensor(Xt) .== tensor(Xb))), sum(m) * (length(tensor(Xb)) / length(m)))
+                @test isapprox(sum((tensor(Xt) .== tensor(Xb))), sum(.!m) * (length(tensor(Xb)) / length(m)))
             else
-                @assert sum((tensor(Xt) .== tensor(Xb))) >= sum(m) * (length(tensor(Xb)) / length(m))
+                @test sum((tensor(Xt) .== tensor(Xb))) >= sum(.!m) * (length(tensor(Xb)) / length(.!m))
             end
 
             #step - doesn't propogate the mask
@@ -76,10 +76,10 @@ using ForwardBackward
             XM = MaskedState(Xa, m, m)
             if !(p isa InterpolatingDiscreteFlow)
                 Xt = Flowfusion.step(p, XM, Xa, 0.1, 0.1)
-                @assert isapprox(sum(tensor(Xt) .!= tensor(XM)), 0) #Because step size is zero
+                @test isapprox(sum(tensor(Xt) .!= tensor(XM)), 0) #Because step size is zero
             else
                 Xt = Flowfusion.step(p, XM, onehot(Xa), 0.1, 0.1)
-                @assert isapprox(sum(tensor(Xt) .!= tensor(XM)), 0) #Because step size is zero
+                @test isapprox(sum(tensor(Xt) .!= tensor(XM)), 0) #Because step size is zero
             end
         end
 
