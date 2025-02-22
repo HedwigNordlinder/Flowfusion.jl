@@ -39,8 +39,8 @@ sampleX1(n_samples) = Flowfusion.random_literal_cat(n_samples, sigma = T(0.05))[
 n_samples = 500
 
 M = Torus(2)
-P = ManifoldProcess(0.2f0)
-#P = Deterministic()
+P = FProcess(ManifoldProcess(0.2f0), t -> 1-(1-t)^2)
+#P = FProcess(Deterministic(), t -> 1-(1-t)^2)
 
 eta = 0.01
 opt_state = Flux.setup(AdamW(eta = eta, lambda = 0.00001), model)
@@ -57,8 +57,7 @@ for i in 1:iters
     ξ = Guide(Xt, X1)
     #Gradient
     l,g = Flux.withgradient(model) do m
-        #tcloss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t)) #GOING TO HAVE TO ADD GUIDE HERE, AND CHANGE IT TO FLOSS
-        floss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t)) #GOING TO HAVE TO ADD GUIDE HERE, AND CHANGE IT TO FLOSS
+        floss(P, m(t,tensor(Xt)), ξ, scalefloss(P, t))
     end
     #Update
     Flux.update!(opt_state, model, g[1])

@@ -47,7 +47,8 @@ export
     FProcess, 
     floss,
     tcloss,
-    dense
+    dense,
+    batch
 
 
 #Useful for demos etc:
