@@ -65,3 +65,7 @@ function so3_tangent_coordinates_stack(Rt::AbstractArray{T,3}, R1::AbstractArray
     tangent = sqrt(T(2)) .* (theta .* axis)
     return tangent
 end
+
+function so3_tangent_coordinates_stack(rhat::AbstractArray{T,4}, r::AbstractArray{T,4}) where T
+    return reshape(so3_tangent_coordinates_stack(reshape(rhat, 3, 3, :), reshape(r, 3, 3, :)), 3, size(rhat,3), size(rhat,4))
+end
