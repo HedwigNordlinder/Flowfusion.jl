@@ -42,21 +42,21 @@ end
 
 """
     NoisyInterpolatingDiscreteFlow(κ₁, κ₂, dκ₁, dκ₂)
-    NoisyInterpolatingDiscreteFlow(noise) - Uses default cosine schedule, where `noise` is the maximum amplitude of the uniform noise component.
+    NoisyInterpolatingDiscreteFlow(noise, K = 1) - Uses default cosine schedule, where `noise` is the maximum amplitude of the uniform noise component.
     NoisyInterpolatingDiscreteFlow() - Uses default cosine schedule and noise = 0.2.
 
 A convex mixture of X0, uniform noise, and X1. Equation 10 in https://arxiv.org/pdf/2407.15595
 Compared to InterpolatingDiscreteFlow, it encourages the model to make multiple switches during inference.
 κ₁, κ₂ are the schedules for target token interpolation and uniform noise probability.
 dκ₁, dκ₂ are the derivatives of κ₁, κ₂.
-Defaults to using a cosine schedule.
+Defaults to using a cosine schedule. `K=2` will resolve the discrete states later than `K=1`.
 """
 
-NoisyInterpolatingDiscreteFlow(noise) = NoisyInterpolatingDiscreteFlow(
-    t -> oftype(t,(1 - cos((π/2)*t))),
-    t -> oftype(t,(noise * sin(π*t))),
-    t -> oftype(t,((π/2)*sin((π/2)*t))),
-    t -> oftype(t,(noise*π*cos(π*t))),
+NoisyInterpolatingDiscreteFlow(noise, K = 1) = NoisyInterpolatingDiscreteFlow(
+    t -> oftype(t,(1 - cos((π/2)*t))^K), #K1
+    t -> oftype(t,(noise * sin(π*t))), #K2
+    t -> oftype(t,(K * (π/2) * sin((π/2) * t) * (1 - cos((π/2) * t))^(K - 1))), #dK1
+    t -> oftype(t,(noise*π*cos(π*t))) #dK2
 )
 NoisyInterpolatingDiscreteFlow() = NoisyInterpolatingDiscreteFlow(0.2)
 
