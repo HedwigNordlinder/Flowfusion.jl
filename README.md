@@ -190,7 +190,7 @@ For background reading please see:
 - [Flow Matching for Generative Modeling](https://arxiv.org/abs/2210.02747)
 - [Denoising Diffusion Bridge Models](https://arxiv.org/abs/2309.16948)
 - [Flow matching on general geometries](https://arxiv.org/pdf/2302.03660)
-- [Diffusion on Manifolds](https://arxiv.org/abs/2303.09556)
+- [Diffusion on Manifolds](https://arxiv.org/abs/2208.07949)
 - [Flow Matching (a review/guide)](https://arxiv.org/abs/2412.06264)
 - [Discrete Flow Matching](https://arxiv.org/abs/2407.15595)
 
