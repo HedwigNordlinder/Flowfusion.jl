@@ -41,8 +41,8 @@ end
 
 
 """
-    NoisyInterpolatingDiscreteFlow(κ₁, κ₂, dκ₁, dκ₂)
-    NoisyInterpolatingDiscreteFlow(noise, K = 1) - Uses default cosine schedule, where `noise` is the maximum amplitude of the uniform noise component.
+    NoisyInterpolatingDiscreteFlow(κ₁, κ₂, dκ₁, dκ₂, dummy_token)
+    NoisyInterpolatingDiscreteFlow(noise; K = 1, dummy_token = nothing) - Uses default cosine schedule, where `noise` is the maximum amplitude of the uniform noise component.
     NoisyInterpolatingDiscreteFlow() - Uses default cosine schedule and noise = 0.2.
 
 A convex mixture of X0, uniform noise, and X1. Equation 10 in https://arxiv.org/pdf/2407.15595
@@ -50,16 +50,21 @@ Compared to InterpolatingDiscreteFlow, it encourages the model to make multiple 
 κ₁, κ₂ are the schedules for target token interpolation and uniform noise probability.
 dκ₁, dκ₂ are the derivatives of κ₁, κ₂.
 Defaults to using a cosine schedule. `K=2` will resolve the discrete states later than `K=1`.
+If K>1 things might break if your X0 is not the `dummy_token` (also called the masked token) which should be passed to NoisyInterpolatingDiscreteFlow.
 """
-
-NoisyInterpolatingDiscreteFlow(noise, K = 1) = NoisyInterpolatingDiscreteFlow(
-    t -> oftype(t,(1 - cos((π/2)*t))^K), #K1
-    t -> oftype(t,(noise * sin(π*t))), #K2
-    t -> oftype(t,(K * (π/2) * sin((π/2) * t) * (1 - cos((π/2) * t))^(K - 1))), #dK1
-    t -> oftype(t,(noise*π*cos(π*t))) #dK2
-)
-NoisyInterpolatingDiscreteFlow() = NoisyInterpolatingDiscreteFlow(0.2)
-
+function NoisyInterpolatingDiscreteFlow(noise; K = 1, dummy_token::T = nothing) where T
+    if (K > 1 && isnothing(dummy_token)) 
+        @warn "NoisyInterpolatingDiscreteFlow: If K>1 things might break if your X0 is not the `dummy_token` (which should also be passed to NoisyInterpolatingDiscreteFlow)."
+    end
+    return NoisyInterpolatingDiscreteFlow{T}(
+                t -> oftype(t,(1 - cos((π/2)*t))^K), #K1
+                t -> oftype(t,(noise * sin(π*t))), #K2
+                t -> oftype(t,(K * (π/2) * sin((π/2) * t) * (1 - cos((π/2) * t))^(K - 1))), #dK1
+                t -> oftype(t,(noise*π*cos(π*t))), #dK2
+                dummy_token
+                )
+end
+NoisyInterpolatingDiscreteFlow() = NoisyInterpolatingDiscreteFlow{Nothing}(0.2)
 function bridge(p::NoisyInterpolatingDiscreteFlow, x0::DiscreteState{<:AbstractArray{<:Signed}}, x1::DiscreteState{<:AbstractArray{<:Signed}}, t)
     D = size(x0.state)
     ts = expand(t, ndims(x0.state))
@@ -78,8 +83,7 @@ function bridge(p::NoisyInterpolatingDiscreteFlow, x0::DiscreteState{<:AbstractA
     end
     return Xt
 end
-
-function step(P::NoisyInterpolatingDiscreteFlow, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}, X̂₁, s₁, s₂)
+function step(P::NoisyInterpolatingDiscreteFlow{Nothing}, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}, X̂₁, s₁, s₂)
     T = eltype(s₁)
     Δt = s₂ .- s₁
     ohXₜ = onehot(Xₜ)
@@ -94,6 +98,32 @@ function step(P::NoisyInterpolatingDiscreteFlow, Xₜ::DiscreteState{<:AbstractA
     bt = dκ3 ./ (eps .+ κ3)
     #Theorem 3 applied to equation 10 in https://arxiv.org/pdf/2407.15595
     velo = (dκ1 .- κ1 .* bt) .* tensor(X̂₁) .+ (dκ2 .- κ2 .* bt) .* pu .+ bt .* tensor(ohXₜ)
+    newXₜ = CategoricalLikelihood(eltype(s₁).(tensor(ohXₜ) .+ (Δt .* velo)))
+    clamp!(tensor(newXₜ), 0, Inf)
+    return rand(newXₜ)
+end
+function step(P::NoisyInterpolatingDiscreteFlow{<:Integer}, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}, X̂₁, s₁, s₂)
+    T = eltype(s₁)
+    Δt = s₂ .- s₁
+    ohXₜ = onehot(Xₜ)
+    pu = T(1/Xₜ.K)
+    eps = T(1e-10)
+    κ1 = P.κ₁.(s₁)
+    κ2 = P.κ₂.(s₁)
+    κ3 = (1 .- (κ1 .+ κ2))  # κ₃(t)=1-κ₁(t)-κ₂(t)
+    dκ1 = P.dκ₁.(s₁)
+    dκ2 = P.dκ₂.(s₁)
+    dκ3 = .- (dκ1 .+ dκ2)  # Because dκ₃ = - (dκ₁+dκ₂)
+    #Theorem 3 applied to equation 10 in https://arxiv.org/pdf/2407.15595
+    r1 = dκ1 ./ (eps .+ κ1)
+    r2 = dκ2 ./ (eps .+ κ2)
+    r3 = dκ3 ./ (eps .+ κ3)
+    bt = min.(r1,r2, r3) #b_t = min_j dκ_j/κ_j
+    a1 = dκ1 .- κ1 .* bt             # component 1 (denoiser)
+    a2 = dκ2 .- κ2 .* bt             # component 2 (uniform)
+    a3 = dκ3 .- κ3 .* bt             # component 3 (dummy/mask)
+    velo =  a1 .* tensor(X̂₁) .+ a2 .* pu .+ bt .* tensor(ohXₜ)
+    selectdim(velo,1,P.mask_token) .+= a3 #Adding the mask token compoenent to the correct tensor slice
     newXₜ = CategoricalLikelihood(eltype(s₁).(tensor(ohXₜ) .+ (Δt .* velo)))
     clamp!(tensor(newXₜ), 0, Inf)
     return rand(newXₜ)
