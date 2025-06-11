@@ -65,6 +65,7 @@ function NoisyInterpolatingDiscreteFlow(noise; K = 1, dummy_token::T = nothing) 
                 )
 end
 NoisyInterpolatingDiscreteFlow() = NoisyInterpolatingDiscreteFlow{Nothing}(0.2)
+NoisyInterpolatingDiscreteFlow(noise, power) = NoisyInterpolatingDiscreteFlow(noise, K = power)
 function bridge(p::NoisyInterpolatingDiscreteFlow, x0::DiscreteState{<:AbstractArray{<:Signed}}, x1::DiscreteState{<:AbstractArray{<:Signed}}, t)
     D = size(x0.state)
     ts = expand(t, ndims(x0.state))
