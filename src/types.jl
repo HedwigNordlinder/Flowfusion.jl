@@ -57,9 +57,10 @@ struct InterpolatingDiscreteFlow <: ConvexInterpolatingDiscreteFlow
     κ̇::Function
 end
 
-struct NoisyInterpolatingDiscreteFlow <: ConvexInterpolatingDiscreteFlow
+struct NoisyInterpolatingDiscreteFlow{T} <: ConvexInterpolatingDiscreteFlow
     κ₁::Function    # schedule for target token interpolation
     κ₂::Function    # schedule for uniform noise probability
     dκ₁::Function   # derivative of κ₁
     dκ₂::Function   # derivative of κ₂
+    mask_token::T   # the token that is used for the X0 state
 end
