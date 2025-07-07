@@ -1,18 +1,12 @@
-#States
-element(state,seqindex,batchindex) = selectdim(selectdim(state, ndims(state), batchindex), ndims(state)-1, seqindex) 
-element(S::MaskedState, seqindex, batchindex) = element(S.S, seqindex, batchindex)
-element(S::ContinuousState, seqindex, batchindex) = ContinuousState(element(S.state, seqindex, batchindex))
-element(S::ManifoldState, seqindex, batchindex) = ManifoldState(S.M, element(S.state, seqindex, batchindex))
-element(S::DiscreteState, seqindex, batchindex) = DiscreteState(S.K, element(S.state, seqindex, batchindex))
-element(S::Tuple{Vararg{Flowfusion.UState}}, seqindex, batchindex) = element.(S, seqindex, batchindex)
+element(state, seqindex) = selectdim(state, ndims(state), seqindex:seqindex)
+element(state, seqindex, batchindex) = element(selectdim(state, ndims(state), batchindex), seqindex)
 
-#When there isn't a batch dim:
-element(state,seqindex) = selectdim(state, ndims(state), seqindex)
-element(S::MaskedState, seqindex) = element(S.S, seqindex)
-element(S::ContinuousState, seqindex) = ContinuousState(element(S.state, seqindex))
-element(S::ManifoldState, seqindex) = ManifoldState(S.M, element(S.state, seqindex))
-element(S::DiscreteState, seqindex) = DiscreteState(S.K, element(S.state, seqindex))
-element(S::Tuple{Vararg{Flowfusion.UState}}, seqindex) = element.(S, seqindex)
+element(S::MaskedState, inds...) = element(S.S, inds...)
+element(S::ContinuousState, inds...) = ContinuousState(element(S.state, inds...))
+element(S::ManifoldState, inds...) = ManifoldState(S.M, element(S.state, inds...))
+element(S::DiscreteState, inds...) = DiscreteState(S.K, element(S.state, inds...))
+
+element(S::Tuple{Vararg{Flowfusion.UState}}, inds...) = element.(S, inds...)
 
 #Create a "zero" state appropriate for the type. Tricky for manifolds, but we just want rotations working for now I think.
 zerostate(element::T, expandsize...) where T <: ContinuousState = T(similar(tensor(element), size(tensor(element))..., expandsize...) .= 0)
