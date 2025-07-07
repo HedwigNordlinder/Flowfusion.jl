@@ -9,14 +9,19 @@ element(S::DiscreteState, inds...) = DiscreteState(S.K, element(S.state, inds...
 element(S::Tuple{Vararg{Flowfusion.UState}}, inds...) = element.(S, inds...)
 
 #Create a "zero" state appropriate for the type. Tricky for manifolds, but we just want rotations working for now I think.
-zerostate(element::T, expandsize...) where T <: ContinuousState = T(similar(tensor(element), size(tensor(element))..., expandsize...) .= 0)
-zerostate(element::DiscreteState{<:AbstractArray{<:Signed}}, expandsize...) = DiscreteState(element.K,similar(tensor(element), size(tensor(element))..., expandsize...) .= element.K)
+zerostate(element::T, expandsize...) where T <: ContinuousState = T(similar(tensor(element), size(tensor(element))[1:end-1]..., expandsize...) .= 0)
+zerostate(element::DiscreteState{<:AbstractArray{<:Signed}}, expandsize...) = DiscreteState(element.K,similar(tensor(element), size(tensor(element))[1:end-1]..., expandsize...) .= element.K)
 zerostate(element::DiscreteState, expandsize...) = Flowfusion.onehot(DiscreteState(element.K,zeros(Int,expandsize...) .= element.K))
 function zerostate(element::T, expandsize...) where T <: Union{ManifoldState{<:Rotations},ManifoldState{<:SpecialOrthogonal}}
-    newtensor = similar(tensor(element), size(tensor(element))..., expandsize...) .= 0
+    newtensor = similar(tensor(element), size(tensor(element))[1:end-1]..., expandsize...) .= 0
     for i in 1:manifold_dimension(element.M)
         selectdim(selectdim(newtensor, 1,i),1,i) .= 1
     end
+    return ManifoldState(element.M, eachslice(newtensor, dims=ntuple(i -> 2+i, length(expandsize))))
+end
+#Pls test this general version with other manifolds? Not sure this will handle the various underlying representations
+function zerostate(element::ManifoldState, expandsize...)
+    newtensor = similar(tensor(element), size(tensor(element))[1:end-1]..., expandsize...) .= 0
     return ManifoldState(element.M, eachslice(newtensor, dims=ntuple(i -> 2+i, length(expandsize))))
 end
 
