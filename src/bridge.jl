@@ -50,9 +50,13 @@ end
 #resolveprediction exists to stop bridge from needing multiple definitions.
 #Tuple broadcast:
 resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
+
 #Default if X̂₁ is a plain tensor:
-resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = copytensor!(stochastic(Xₜ), X̂₁) #Returns a Likelihood
-resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = copytensor!(stochastic(unhot(Xₜ)), X̂₁) #Probably inefficient
+#I think these were serving processes with a faulty assumption, so I'm swapping them out to make Doob flows easier.
+#resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = copytensor!(stochastic(Xₜ), X̂₁) #Returns a Likelihood
+#resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = copytensor!(stochastic(unhot(Xₜ)), X̂₁) #Probably inefficient
+resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = X̂₁ #<-Need to test if this breaking anything else
+resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = X̂₁ #<-Need to test if this breaking anything else
 
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
 #Passthrough if the user returns a State or Likelihood
