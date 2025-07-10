@@ -67,7 +67,7 @@ for i in 1:iters
     Flux.update!(opt_state, model, g[1])
     if i % 10 == 0
         if i > iters - 1000
-            eta = max(eta - orig_eta/100, 1e-9)
+            global eta = max(eta - orig_eta/100, 1e-9)
             Optimisers.adjust!(opt_state, eta)
         end
         println("i: $i; Loss: $l; eta: $eta")
