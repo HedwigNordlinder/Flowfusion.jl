@@ -44,7 +44,7 @@ using ForwardBackward
 
     @testset "Bridge, step" begin
 
-        siz = (5,6,7)
+        siz = (5,6)
         XC() = ContinuousState(randn(5, siz...))
         XD() = DiscreteState(5, rand(1:5, siz...))
         MT = Torus(2)

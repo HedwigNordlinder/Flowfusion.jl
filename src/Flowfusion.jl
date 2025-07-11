@@ -17,9 +17,6 @@ Later:
 =#
 
 
-
-
-
 module Flowfusion
 
 using ForwardBackward, OneHotArrays, Adapt, Manifolds, NNlib, LogExpFunctions
@@ -30,6 +27,8 @@ include("bridge.jl")
 include("loss.jl")
 include("processes.jl")
 include("doob.jl")
+
+include("batching.jl")
 
 export
     #Processes not in ForwardBackward.jl
