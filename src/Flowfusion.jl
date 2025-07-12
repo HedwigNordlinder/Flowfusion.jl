@@ -49,7 +49,8 @@ export
     floss,
     tcloss,
     dense,
-    batch
+    batch,
+    regroup
 
 
 #Useful for demos etc:
