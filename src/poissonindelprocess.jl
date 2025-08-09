@@ -1,3 +1,82 @@
+#=
+Poisson–Indel Process (PIP) bridge with Uniform Discrete substitutions (no explicit Q/P matrices).
+
+Problem setup
+- Alphabet: integers 1…K (K ≡ `p.k`).
+- Substitution: Uniform-discrete continuous-time Markov chain with instantaneous off-diagonal rate α/K.
+  Over time s, the transition kernel is:
+    Pdiag(s) = e^{-α s} + (1 - e^{-α s})/K
+    Poff(s)  = (1 - e^{-α s})/K
+- Deletion: Each extant symbol survives a branch of length s with probability s_surv = e^{-μ s}.
+- Insertion: Along a branch of length s, new symbols arrive via a Poisson process with rate λ.
+  In the PIP construction, the expected number of descendants of a “virtual” immortal line is
+    E[#insertions over s] = (λ/μ) * (1 - e^{-μ s}),
+  and per-token probability mass is divided uniformly by K:
+    Iins(s) = λ * ((1 - e^{-μ s})/μ) / K.
+
+Bridge geometry
+- We consider a node at time t ∈ [0,1] with sequence X_t (unknown).
+- Left branch (to x0) has length t; right branch (to x1) has length s = 1 - t.
+  Let s1 = e^{-μ t}, s2 = e^{-μ (1-t)}, and pow_sub(t) = e^{-α t} etc.
+
+Two-branch alignment kernel (Uniform Discrete)
+- For the pair (x0, x1) we define posterior proportions over three event types on the alignment grid:
+  A: an x0-only letter (visible in x0, not in x1),
+  B: an x1-only letter,
+  R: a paired letter (visible in both x0 and x1).
+- For R, the letter-level posterior depends on whether x0[i]==x1[j]:
+  use P1(·; t) for the left branch and P2(·; 1-t) for the right branch.
+- We compute unnormalized masses for A, B (aggregated over tokens) and R (split into “same token” vs “different”),
+  and then normalize to probabilities pA, pB, pR_diag, pR_off. These are used by:
+  - A forward DP computing the total alignment weight F[n+1,m+1].
+  - A backward sampler drawing a particular alignment path (events).
+
+Ancestral sequence sampling X_t
+- Given the sampled alignment path, we sample each ancestral letter r ∈ {1,…,K} in O(1) time:
+  - For an R event, P(r | x0[i], x1[j]) is proportional to P1(r→x0[i]) P2(r→x1[j]).
+  - For A or B:
+      There is a mixture “present-at-t” vs “inserted after t” with weights proportional to
+        present: s_branch * (1 - s_other) / K,
+        inserted: (λ/μ) * (1 - s_branch) / K.
+      If present, sample r given the single observed descendant using P1 or P2.
+  - Finally, we add “ghost” insertions in X_t with count ~ Poisson((λ/μ) (1 - s1) (1 - s2)),
+    each placed uniformly among |X_t|+1 slots, and token ~ Uniform(1…K).
+
+Single-branch inside–outside for Doob h-transform (hazard rates)
+- On the right branch (length s = 1 - t), given current sequence X_t and leaf x1:
+  - Forward-backward in log-space yields the current likelihood h_cur and local ratios used to form rates.
+  - Deletion at position i: μ times posterior probability that this position is deleted on the remainder.
+  - Substitution at i to token b: (α/K) times a ratio correcting for how b changes the inside–outside mass
+    (no self-substitution; rate is zero for b==X_t[i]).
+  - Insertion between positions s (0…n): (λ/K) times a mixture ratio combining immediate deletion-of-insert
+    and potential matching to leaf letters, again via inside–outside sums.
+- Two APIs:
+  - Grouped: aggregates substitution and insertion rates into “match any leaf token value appearing in x1”
+    versus “all other tokens,” avoiding O(K) storage.
+  - Full tensor: returns full per-token tensors of shape (K, n) for substitutions and (K, n+1) for insertions.
+
+Numerical notes
+- All inside–outside computations are carried out in log-space with a stable logaddexp.
+- Backward sampling protects against underflow: if all weights are 0 due to underflow, a valid move is chosen
+  deterministically to complete a path.
+
+Shapes and symbols (n := length(X_t), m := length(x1), K := p.k)
+- Grouped Doob:
+  - del :: (n,)
+  - sub_match :: (U, n), tokens U that appear at least once in x1
+  - sub_other :: (n,), aggregated over the “other” class at each position
+  - sub_match_tokens :: (U,), the concrete token IDs for the “match” columns
+  - sub_other_count :: (n,), multiplicity for the “other” class per position i
+  - ins_match :: (U, n+1)
+  - ins_other :: (n+1,)
+  - ins_other_count :: Int, multiplicity K - U for insertions
+  - hcur :: scalar likelihood
+- Full-tensor Doob:
+  - sub :: (K, n)
+  - del :: (n,)
+  - ins :: (K, n+1)
+  - hcur :: scalar likelihood
+=#
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
