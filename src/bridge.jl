@@ -187,16 +187,3 @@ end
 #As some point we should move these to ForwardBackward.jl. Low prio because they're mostly not needed for other applications.
 tensor_cat(Xs::Vector{T}; dims_from_end = 1) where T = cat(tensor.(Xs)..., dims = ndims(tensor(Xs[1])) - dims_from_end + 1)
 tensor_cat(Xs::Vector{Nothing}) = nothing
-
-"""
-    batch(Xs::Vector{T}; dims_from_end = 1)
-
-Doesn't handle padding. Add option to pad if batching along dims that don't have the same length.
-"""
-batch(Xs::Vector{T}; dims_from_end = 1) where T<:ContinuousState = T(tensor_cat(Xs; dims_from_end))
-batch(Xs::Vector{T}; dims_from_end = 1) where T<:DiscreteState = T(Xs[1].K, tensor_cat(Xs; dims_from_end))
-batch(Xs::Vector{<:ManifoldState{<:M,<:A}}; dims_from_end = 1) where {M, A} = ManifoldState(Xs[1].M, eachslice(tensor_cat(Xs; dims_from_end), dims = Tuple((ndims(Xs[1].state[1])+1:ndims(tensor(Xs[1])))))) #Only tested for rotations.
-batch(Xs::Vector{<:Tuple{Vararg{UState}}}, dims_from_end = 1) = Tuple([batch([x[i] for x in Xs], dims_from_end = dims_from_end) for i in 1:length(Xs[1])])
-
-#Should never move to ForwardBackward.jl
-batch(Xs::Vector{<:MaskedState}; dims_from_end = 1) = MaskedState(batch(unmask.(Xs); dims_from_end), tensor_cat([X.cmask for X in Xs]; dims_from_end), tensor_cat([X.lmask for X in Xs]; dims_from_end))

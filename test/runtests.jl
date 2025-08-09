@@ -42,6 +42,74 @@ using ForwardBackward
         end
     end
 
+    @testset "Batching padded generic" begin
+        # Build variable-length samples for each state type and test batch for plain and masked inputs
+        sizA = (3,)   # feature dims for continuous/discrete
+        MT = Torus(2)
+        MR = SpecialOrthogonal(3)
+
+        # helpers to make variable-length sequences
+        function mkC(len)
+            ContinuousState(randn(3, len))
+        end
+        function mkD(len)
+            DiscreteState(5, rand(1:5, len))
+        end
+        function mkT(len)
+            ManifoldState(MT, [rand(MT) for _ in 1:len])
+        end
+        function mkR(len)
+            ManifoldState(MR, [rand(MR) for _ in 1:len])
+        end
+
+        lens = [2,4,3]
+        # plain states
+        for maker in (mkC, mkD, mkT, mkR)
+            xs = [maker(l) for l in lens]
+            B = Flowfusion.batch(xs)
+            @test B isa MaskedState
+            # masks: last dim is length, batch dim after that
+            @test size(B.lmask) == (maximum(lens), length(lens))
+            for i in eachindex(lens)
+                @test all(B.lmask[1:lens[i], i])
+                if lens[i] < maximum(lens)
+                    @test all(.!B.lmask[(lens[i]+1):end, i])
+                end
+            end
+        end
+
+        # masked inputs: create per-item masks of their true length
+        for maker in (mkC, mkD, mkT, mkR)
+            xs = [maker(l) for l in lens]
+            cms = [trues(l) for l in lens]
+            lms = [falses(l) for l in lens]
+            # flip some
+            cms[2][end] = false
+            lms[1][1] = true
+            mxs = [MaskedState(xs[i], cms[i], lms[i]) for i in eachindex(xs)]
+            B = Flowfusion.batch(mxs)
+            @test B isa MaskedState
+            @test size(B.cmask) == (maximum(lens), length(lens))
+            @test B.cmask[lens[2], 2] == false
+            @test B.lmask[1, 1] == true
+            # padded zones must be false
+            for i in eachindex(lens)
+                if lens[i] < maximum(lens)
+                    @test all(B.cmask[(lens[i]+1):end, i] .== false)
+                    @test all(B.lmask[(lens[i]+1):end, i] .== false)
+                end
+            end
+        end
+
+        # tuple of states
+        xs_tuple = [(mkC(l), mkD(l)) for l in lens]
+        BT = Flowfusion.batch(xs_tuple)
+        @test BT isa Tuple
+        @test all(BT[i] isa MaskedState for i in 1:2)
+        @test size(BT[1].lmask) == (maximum(lens), length(lens))
+        @test size(BT[2].lmask) == (maximum(lens), length(lens))
+    end
+
     @testset "Bridge, step" begin
 
         siz = (5,6)
@@ -120,6 +188,85 @@ using ForwardBackward
             F = zeros(Float64, 2, 2)
             @test Flowfusion.branch_prob_ud!(F, [3], [3], B) ≈ (s2 + 2*(1 - s2)*Iins) atol=1e-12
         end
+
+  @testset "PIP step (Euler, no batch)" begin
+    rng = Flowfusion.MersenneTwister(123)
+    Flowfusion.Random.seed!(rng, 0)
+    K = 5
+    p = UniformDiscretePoissonIndelProcess(0.1, 0.2, 0.3, K)
+    # simple sequence
+    Xt = DiscreteState(K, [1, 2, 3])
+    n = length(tensor(Xt))
+    dt = 1e-4
+
+    # Case 1: pure deletion on position 2 at rate r, others zero
+    del = zeros(Float64, n); del[2] = 7.0
+    sub = zeros(Float64, K, n)
+    ins = zeros(Float64, K, n + 1)
+    guide = Flowfusion.Guide((sub = sub, del = del, ins = ins))
+    # Repeat many trials to estimate probability of deletion ≈ dt * r
+    trials = 100000
+    cnt_delete = 0
+    for _ in 1:trials
+      Y = Flowfusion.step(p, Xt, guide, 0.0, dt)
+      if length(tensor(Y)) == 2 && tensor(Y) == [1, 3]
+        cnt_delete += 1
+      end
+    end
+    #@test isapprox(cnt_delete / trials, dt * del[2]; rtol = 0.25)
+    @show log10(cnt_delete / trials) , log10(dt * del[2])
+    @test abs(log10(cnt_delete / trials) - log10(dt * del[2])) ≤ 0.1
+
+    # Case 2: pure substitution at position 1 from token 1 to token 4 at rate r
+    del .= 0
+    sub .= 0
+    sub[4, 1] = 11.0
+    guide = Flowfusion.Guide((sub = sub, del = del, ins = ins))
+    cnt_sub = 0
+    for _ in 1:trials
+      Y = Flowfusion.step(p, Xt, guide, 0.0, dt)
+      if length(tensor(Y)) == 3 && tensor(Y)[1] == 4
+        cnt_sub += 1
+      end
+    end
+    @show log10(cnt_sub / trials) , log10(dt * sub[4, 1])
+    @test abs(log10(cnt_sub / trials) - log10(dt * sub[4, 1])) ≤ 0.1
+
+    # Case 3: pure insertion between positions 1 and 2 (gap s=1) of token 5 at rate r
+    del .= 0
+    sub .= 0
+    ins .= 0
+    ins[5, 2] = 13.0 # s=1 -> index 2 in (K, n+1)
+    guide = Flowfusion.Guide((sub = sub, del = del, ins = ins))
+    cnt_ins = 0
+    for _ in 1:trials
+      Y = Flowfusion.step(p, Xt, guide, 0.0, dt)
+      y = tensor(Y)
+      if length(y) == 4 && y[2] == 5
+        cnt_ins += 1
+      end
+    end
+    @show log10(cnt_ins / trials) , log10(dt * ins[5, 2])
+    @test abs(log10(cnt_ins / trials) - log10(dt * ins[5, 2])) ≤ 0.1
+
+    # Case 4: ensure at most one event per small dt when multiple hazards present
+    del .= 2.0
+    sub .= 0
+    ins .= 1.0
+    guide = Flowfusion.Guide((sub = sub, del = del, ins = ins))
+    # For small dt, probability of >=2 events is o(dt); check empirically remains very small
+    overtwo = 0
+    trials2 = 20000
+    for _ in 1:trials2
+      Y = Flowfusion.step(p, Xt, guide, 0.0, dt)
+      diff = length(tensor(Y)) - length(tensor(Xt))
+      # deletions reduce len by >=1; insertions increase by >=1; substitutions don't change length
+      if abs(diff) >= 2
+        overtwo += 1
+      end
+    end
+    @test overtwo / trials2 ≤ 5e-3
+  end
         
         @testset "sample_alignment_ud: deterministic kernel" begin
             rng = Flowfusion.MersenneTwister(1)
@@ -176,6 +323,69 @@ using ForwardBackward
             @test maximum(abs.(F.del .- G.del)) ≤ 1e-8
             @test maximum(abs.(F.sub .- sub_from_grouped)) ≤ 1e-8
             @test maximum(abs.(F.ins .- ins_from_grouped)) ≤ 1e-8
+        end
+        
+        for prex0 in [[1,2,4], [1,4], [1]], prex1 in [[1,2,4], [1,4], [1]]
+            @testset "Bridge vs Step marginal consistency $prex0 -> $prex1" begin
+                Flowfusion.Random.seed!(1234)
+                K = 6
+                p = UniformDiscretePoissonIndelProcess(0.05, 0.05, 0.05, K)
+                x0 = DiscreteState(K, prex0)
+                x1 = DiscreteState(K, prex1)
+                times = [0.2, 0.5, 0.8]
+
+                # bridge marginals
+                Nbridge = 10_000
+                bridge_counts = Dict{Float64, Dict{Vector{Int}, Int}}()
+                for t in times
+                    bridge_counts[t] = Dict{Vector{Int}, Int}()
+                    C = Flowfusion.make_precomp(p, t)
+                    for _ in 1:Nbridge
+                        xt, _ = Flowfusion.sample_Xt_ud(p, tensor(x0), tensor(x1), C)
+                        get!(bridge_counts[t], xt, 0)
+                        bridge_counts[t][xt] += 1
+                    end
+                end
+
+                # step marginals via small steps, recording at times
+                Nstep = 5_000
+                dt = 0.01
+                grid = collect(0.0:dt:1.0)
+                function record!(d::Dict{Vector{Int}, Int}, x::Vector{Int})
+                    get!(d, x, 0); d[x] += 1
+                end
+                step_counts = Dict(t => Dict{Vector{Int}, Int}() for t in times)
+                for _ in 1:Nstep
+                    Xt = x0
+                    for k in 1:(length(grid)-1)
+                        s1, s2 = grid[k], grid[k+1]
+                        rates = Flowfusion.doob_ud_full_tensors_fast(p, tensor(Xt), tensor(x1), s1)
+                        guide = Flowfusion.Guide((sub=rates.sub, del=rates.del, ins=rates.ins))
+                        Xt = Flowfusion.step(p, Xt, guide, s1, s2)
+                        if any(abs.(s2 .- times) .< 1e-8)
+                            record!(step_counts[s2], tensor(Xt))
+                        end
+                    end
+                end
+
+                # compare via total variation distance
+                function tvd(d1::Dict{Vector{Int}, Int}, n1::Int, d2::Dict{Vector{Int}, Int}, n2::Int)
+                    keys_all = union(keys(d1), keys(d2))
+                    s = 0.0
+                    for k in keys_all
+                        p = get(d1, k, 0) / n1
+                        q = get(d2, k, 0) / n2
+                        s += abs(p - q)
+                    end
+                    return 0.5 * s
+                end
+
+                for t in times
+                    tv = tvd(bridge_counts[t], Nbridge, step_counts[t], Nstep)
+                    @show prex0, prex1, t, tv
+                    @test tv ≤ 0.25
+                end
+            end
         end
     end
 end

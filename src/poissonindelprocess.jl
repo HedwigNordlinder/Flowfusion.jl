@@ -630,7 +630,8 @@ function doob_ud_grouped_fast(p::UniformDiscretePoissonIndelProcess{T}, Xt::Vect
     for i in 1:n
         acc = -Inf
         for j in 0:m
-            acc = logaddexp(acc, logF[i, j+1] + log_del + logB[i+1, j+1])
+            #acc = logaddexp(acc, logF[i, j+1] + log_del + logB[i+1, j+1])
+            acc = logaddexp(acc, logF[i, j+1] + logB[i+1, j+1])
         end
         r = acc == -Inf ? zero(T) : exp(acc - loghcur)
         del[i] = p.μ * r
@@ -661,8 +662,8 @@ function doob_ud_grouped_fast(p::UniformDiscretePoissonIndelProcess{T}, Xt::Vect
     ins_match = zeros(T, U, n+1)
     ins_other = zeros(T, n+1)
     ins_other_count = K - U
-    q_ins = p.λ / K
-
+    q_ins = p.λ / K #Flag
+    
     for s in 0:n
         base_ratio = (1 - C.s2) * D_ratio[s+1] + C.s2 * S_ratio[s+1] * C.P2_off
         base_ratio = max(zero(T), base_ratio)
@@ -764,8 +765,8 @@ function doob_ud_full_tensors_fast(p::UniformDiscretePoissonIndelProcess{T}, Xt:
 
     ΔP   = C.P2_diag - C.P2_off
     q_off = p.α / K
-    q_ins = p.λ / K
-
+    q_ins = p.λ / K #Flag
+    
     # Substitutions: token-first (K, n)
     sub = zeros(T, K, n)
     for i in 1:n
@@ -803,7 +804,8 @@ function doob_ud_full_tensors_fast(p::UniformDiscretePoissonIndelProcess{T}, Xt:
     for i in 1:n
         acc = -Inf
         for j in 0:m
-            acc = logaddexp(acc, logF[i, j+1] + log_del + logB[i+1, j+1])
+            #acc = logaddexp(acc, logF[i, j+1] + log_del + logB[i+1, j+1])
+            acc = logaddexp(acc, logF[i, j+1] + logB[i+1, j+1])
         end
         r = acc == -Inf ? zero(T) : exp(acc - loghcur)
         del[i] = p.μ * r
@@ -878,9 +880,224 @@ function bridge(p::UniformDiscretePoissonIndelProcess, x0::DiscreteState{<:Abstr
 end
 
 #=
-P = UniformDiscretePoissonIndelProcess(20)
-x0 = DiscreteState(20, [1,2,3,4,5])
-x1 = DiscreteState(20, [6,7,8,9,10])
+using Pkg
+Pkg.activate(".")
+using Revise
+Pkg.develop(path = "../")
+using Flowfusion, ForwardBackward, StatsBase
+P = UniformDiscretePoissonIndelProcess(10, lambda = 0.5, mu = 0.5, alpha = 0.5)
+P = UniformDiscretePoissonIndelProcess(10, lambda = 0.1, mu = 0.1, alpha = 0.0)
+x0 = DiscreteState(20, [1,2,3])
+x1 = DiscreteState(20, [1,4,3])
+t = 0.001
+bridges = [tensor(bridge(P, x0, x1, t)) for _ in 1:1000];
+sort(collect(countmap(bridges)), by = last, rev=true)
 t = 0.5
-bridge(P, x0, x1, t)
+bridges = [tensor(bridge(P, x0, x1, t)) for _ in 1:1000];
+sort(collect(countmap(bridges)), by = last, rev=true)
+t = 0.999
+bridges = [tensor(bridge(P, x0, x1, t)) for _ in 1:1000];
+sort(collect(countmap(bridges)), by = last, rev=true)
+
+
+
+P = UniformDiscretePoissonIndelProcess(10, lambda = 0.1, mu = 0.1, alpha = 0.1)
+x0 = DiscreteState(20, [1,4])
+x1 = DiscreteState(20, [1])
+xt = bridge(P, x0, x1, 0.5)
+
+
+P = UniformDiscretePoissonIndelProcess(10, lambda = 0.1, mu = 0.1, alpha = 0.1); #Called via convenience constructor
+xt = [1,4];
+x1 = [1];
+rates = Flowfusion.doob_ud_full_tensors_fast(P, xt, x1, 0.999);
+rates.del
+
+
+
+K = 6
+p = UniformDiscretePoissonIndelProcess(0.01, 0.01, 0.01, K)
+x0 = DiscreteState(K, [1,4])
+x1 = DiscreteState(K, [1,2,4])
+times = [0.2, 0.5, 0.8]
+
+# bridge marginals
+Nbridge = 10_000
+bridge_counts = Dict{Float64, Dict{Vector{Int}, Int}}()
+for t in times
+    bridge_counts[t] = Dict{Vector{Int}, Int}()
+    C = Flowfusion.make_precomp(p, t)
+    for _ in 1:Nbridge
+        xt, _ = Flowfusion.sample_Xt_ud(p, tensor(x0), tensor(x1), C)
+        get!(bridge_counts[t], xt, 0)
+        bridge_counts[t][xt] += 1
+    end
+end
+
+bridge_counts[0.2]
+
+# step marginals via small steps, recording at times
+Nstep = 10_000
+dt = 0.01
+grid = collect(0.0:dt:1.0)
+function record!(d::Dict{Vector{Int}, Int}, x::Vector{Int})
+    get!(d, x, 0); d[x] += 1
+end
+step_counts = Dict(t => Dict{Vector{Int}, Int}() for t in times)
+for _ in 1:Nstep
+    Xt = x0
+    for k in 1:(length(grid)-1)
+        s1, s2 = grid[k], grid[k+1]
+        rates = Flowfusion.doob_ud_full_tensors_fast(p, tensor(Xt), tensor(x1), s1)
+        guide = Flowfusion.Guide((sub=rates.sub, del=rates.del, ins=rates.ins))
+        Xt = Flowfusion.step(p, Xt, guide, s1, s2)
+        if any(abs.(s2 .- times) .< 1e-8)
+            record!(step_counts[s2], tensor(Xt))
+        end
+    end
+end
+
+step_counts[0.2]
+
+# compare via total variation distance
+function tvd(d1::Dict{Vector{Int}, Int}, n1::Int, d2::Dict{Vector{Int}, Int}, n2::Int)
+    keys_all = union(keys(d1), keys(d2))
+    s = 0.0
+    for k in keys_all
+        p = get(d1, k, 0) / n1
+        q = get(d2, k, 0) / n2
+        s += abs(p - q)
+    end
+    return 0.5 * s
+end
+
+for t in times
+    tv = tvd(bridge_counts[t], Nbridge, step_counts[t], Nstep)
+    @show t, tv
+end
+
+
 =#
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Guide and step (Euler) for UniformDiscretePoissonIndelProcess
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    Guide(P::UniformDiscretePoissonIndelProcess, t, Xt::DiscreteState, X1::DiscreteState)
+
+Convenience wrapper that computes full-tensor Doob rates and wraps them in a
+`Guide` whose payload is a NamedTuple (sub, del, ins).
+"""
+function Guide(P::UniformDiscretePoissonIndelProcess{T}, t::Real,
+               Xt::DiscreteState{<:AbstractArray{<:Signed}},
+               X1::DiscreteState{<:AbstractArray{<:Signed}}) where {T}
+    rates = doob_ud_full_tensors_fast(P, tensor(Xt), tensor(X1), T(t))
+    return Flowfusion.Guide((sub = rates.sub, del = rates.del, ins = rates.ins))
+end
+
+
+"""
+    step(P::UniformDiscretePoissonIndelProcess, Xt, guide::Guide, s1, s2)
+
+Takes a short stochastic step under instantaneous hazard rates provided in
+`guide.H` as NamedTuple (sub, del, ins):
+- sub :: (K, n) per-position substitution hazards (self-sub zero)
+- del :: (n,) deletion hazards per position
+- ins :: (K, n+1) per-gap insertion hazards
+
+Only implemented for 1D `DiscreteState` without batch.
+"""
+function step(P::UniformDiscretePoissonIndelProcess,
+              Xt::DiscreteState{<:AbstractArray{<:Signed}},
+              guide::Flowfusion.Guide,
+              s1::Real, s2::Real)
+    # Extract hazards
+    @assert ndims(Xt.state) == 1 "UniformDiscretePoissonIndelProcess.step only supports 1D DiscreteState"
+    rates = guide.H
+    sub = rates.sub
+    del = rates.del
+    ins = rates.ins
+    K, n = size(sub)
+    @assert length(del) == n
+    @assert size(ins, 1) == K && size(ins, 2) == n + 1
+
+    dt = float(s2 - s1)
+    x = collect(tensor(Xt))  # Vector{Int}
+
+    # Site events: choose at most one per site using thinning
+    to_delete = falses(n)
+    sub_to = zeros(Int, n)    # 0 => no substitution; otherwise token id
+
+    for i in 1:n
+        r_del = del[i]
+        r_sub_total = sum(@view sub[:, i])
+        r_tot = r_del + r_sub_total
+        if r_tot > 0
+            p = 1 - exp(-dt * r_tot)
+            if rand() < p
+                u = rand() * r_tot
+                if u < r_del
+                    to_delete[i] = true
+                else
+                    u2 = u - r_del
+                    # choose token by cumulative sum over sub[:, i]
+                    acc = 0.0
+                    chosen = 0
+                    @inbounds for tok in 1:K
+                        acc += sub[tok, i]
+                        if u2 <= acc
+                            chosen = tok
+                            break
+                        end
+                    end
+                    # In case of tiny numerical issues, fall back to last non-self token
+                    chosen == 0 && (chosen = findfirst(!=(x[i]), 1:K) |> something(1))
+                    sub_to[i] = chosen
+                end
+            end
+        end
+    end
+
+    # Gap insertions: at most one per gap using thinning relative to original positions
+    ins_tok = fill(0, n + 1)  # 0 => no insertion; otherwise token id
+    for s in 0:n
+        r_ins_total = sum(@view ins[:, s + 1])
+        if r_ins_total > 0
+            p = 1 - exp(-dt * r_ins_total)
+            if rand() < p
+                u = rand() * r_ins_total
+                acc = 0.0
+                chosen = 0
+                @inbounds for tok in 1:K
+                    acc += ins[tok, s + 1]
+                    if u <= acc
+                        chosen = tok
+                        break
+                    end
+                end
+                chosen == 0 && (chosen = 1)
+                ins_tok[s + 1] = chosen
+            end
+        end
+    end
+
+    # Build new sequence by scanning original positions, applying deletions/subs and insertions at gaps
+    result = Int[]
+    # s = 0 gap
+    if ins_tok[1] != 0
+        push!(result, ins_tok[1])
+    end
+    for i in 1:n
+        if !to_delete[i]
+            a = sub_to[i] == 0 ? x[i] : sub_to[i]
+            push!(result, a)
+        end
+        if ins_tok[i + 1] != 0
+            push!(result, ins_tok[i + 1])
+        end
+    end
+
+    return DiscreteState(Xt.K, result)
+end
