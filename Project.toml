@@ -5,19 +5,23 @@ version = "0.1.4"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 ForwardBackward = "e879419d-bb0f-4252-adee-d266c51ac92d"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 Manifolds = "1cead3c2-87b3-11e9-0ccd-23c62b72b94e"
 NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
 OneHotArrays = "0b1bfda6-eb8a-41d2-88d8-f5af5cad476f"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
 Adapt = "4.1.1"
+Distributions = "0.25.120"
 ForwardBackward = "0.1.0"
 LogExpFunctions = "0.3.29"
 Manifolds = "0.10.12"
 NNlib = "0.9.27"
 OneHotArrays = "0.2.6"
+Random = "1.11.0"
 StatsBase = "0.34.4"
 julia = "1.9"

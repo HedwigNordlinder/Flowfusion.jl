@@ -19,7 +19,7 @@ Later:
 
 module Flowfusion
 
-using ForwardBackward, OneHotArrays, Adapt, Manifolds, NNlib, LogExpFunctions
+using ForwardBackward, OneHotArrays, Adapt, Manifolds, NNlib, LogExpFunctions, Random, Distributions
 
 include("types.jl")
 include("mask.jl")
@@ -27,14 +27,15 @@ include("bridge.jl")
 include("loss.jl")
 include("processes.jl")
 include("doob.jl")
-
 include("batching.jl")
+include("poissonindelprocess.jl")
 
 export
     #Processes not in ForwardBackward.jl
     InterpolatingDiscreteFlow,
     NoisyInterpolatingDiscreteFlow,
     DoobMatchingFlow,
+    UniformDiscretePoissonIndelProcess,
     MaskedState,
     Guide,
     tangent_guide,
