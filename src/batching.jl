@@ -67,10 +67,14 @@ function batch(Xs::Vector{T}) where {T<:State}
     @assert !isempty(Xs)
     lens = _seqlen.(Xs)
     maxlen = maximum(lens)
+    longest = argmax(lens)
+    if maxlen == 0
+        error("At least one state must have a non-zero length to be batched.") #We should find a way to make this not be a restriction because it can kill a training run.
+    end
     b = length(Xs)
 
     # Create an appropriately-typed zero/pad state of shape (..., maxlen, b)
-    ex = element(Xs[1], 1)
+    ex = element(Xs[longest], 1)
     Sbat = zerostate(ex, maxlen, b)
 
     # Fill real elements

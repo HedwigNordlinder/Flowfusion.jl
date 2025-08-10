@@ -247,6 +247,11 @@ function sample_alignment_ud(rng::AbstractRNG,
   events = Vector{Event}()
   i, j = n, m
   while i>0 || j>0
+    #### Block introduced to fix a rare-ish zero-index bug. Needs more careful thought.
+    # Defensive guards against impossible negatives due to rare numeric issues. BM: sus.
+    if i < 0; i = 0; end
+    if j < 0; j = 0; end
+    #### End of Block introduced to fix a zero-index bug. Needs more careful thought.
     wA = zero(T)
     if i > 0
       wA = F[i, j+1] * KUD.pA
@@ -315,6 +320,46 @@ function sample_Xt_ud(rng::AbstractRNG, p::UniformDiscretePoissonIndelProcess{T}
 
   for ev in events
     if ev.typ === :R
+      #### Block introduced to fix a rare-ish zero-index bug. Needs more careful thought.
+      # Rarely, numerical edge-cases can yield an :R with a border index 0.
+      # Treat these as single-side events to avoid invalid indexing.
+      if ev.i == 0 && ev.j > 0
+        # degrade to :B logic
+        b = x1[ev.j]
+        pre = C.s2*(1 - C.s1) / K
+        ins = (p.λ/p.μ) * (1 - C.s2) / K
+        if rand(rng) < pre/(pre+ins)
+          w_b   = C.P2_diag
+          w_oth = C.P2_off
+          tot = w_b + (K-1)*w_oth
+          if rand(rng) < w_b/tot
+            push!(Xt, b)
+          else
+            push!(Xt, rand_other_excl1(rng, K, b))
+          end
+        end
+        continue
+      elseif ev.j == 0 && ev.i > 0
+        # degrade to :A logic
+        a = x0[ev.i]
+        pre = C.s1*(1 - C.s2) / K
+        ins = (p.λ/p.μ) * (1 - C.s1) / K
+        if rand(rng) < pre/(pre+ins)
+          w_a   = C.P1_diag
+          w_oth = C.P1_off
+          tot = w_a + (K-1)*w_oth
+          if rand(rng) < w_a/tot
+            push!(Xt, a)
+          else
+            push!(Xt, rand_other_excl1(rng, K, a))
+          end
+        end
+        continue
+      elseif ev.i == 0 && ev.j == 0
+        # nothing to do
+        continue
+      end
+      #### End of Block introduced to fix a zero-index bug.
       a = x0[ev.i]; b = x1[ev.j]
       if a == b
         w_a   = C.P1_diag * C.P2_diag
@@ -847,6 +892,66 @@ function doob_ud_full_tensors_fast(p::UniformDiscretePoissonIndelProcess{T}, Xt:
     return (sub = sub, del = del, ins = ins, hcur = exp(loghcur))
 end
 
+
+
+
+
+function bridge(p::UniformDiscretePoissonIndelProcess, x0::DiscreteState{<:AbstractArray{<:Signed}}, x1::DiscreteState{<:AbstractArray{<:Signed}}, t)
+    if ndims(x0.state) != 1
+        error("bridge for UniformDiscretePoissonIndelProcess only implemented for 1D DiscreteState")
+    end
+    C = make_precomp(p, t)
+    flat_xt, _ = sample_Xt_ud(p, tensor(x0), tensor(x1), C)
+    xt = DiscreteState(x0.K, flat_xt)
+    return xt
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PIP Doob-matching loss (positive Bregman on rates)
+# Needs more thought
+# ─────────────────────────────────────────────────────────────────────────────
+
+function _pos_breg(p::AbstractArray{T}, q::AbstractArray{T}; eps = T(1e-8)) where {T}
+  return p .* (log.(p .+ eps) .- log.(q .+ eps)) .- p .+ q
+end
+
+function _gapmask_from_lmask(lmask::AbstractArray{Bool,2})
+  # lmask: (n, B) over letters; gaps are 1:(len+1).
+  # Vectorized construction (no mutation) to be AD-friendly.
+  n, B = size(lmask)
+  lens = vec(sum(lmask; dims=1))             # (B,)
+  s = reshape(1:(n + 1), n + 1, 1)           # (n+1,1)
+  return s .<= reshape(lens .+ 1, 1, B)      # (n+1,B) Bool
+end
+
+function _masked_pos_breg(p::AbstractArray, q::AbstractArray, c, m)
+  return scaledmaskedmean(_pos_breg(p, q), c, m)
+end
+
+function floss(P::fbu(UniformDiscretePoissonIndelProcess), Xt::msu(DiscreteState), X̂₁, X₁::Guide, c)
+  # X̂₁.H and X₁.H are NamedTuples (sub, del, ins); Guide carries lmask
+  pred = X̂₁
+  tgt = X₁.H
+  lm = getlmask(X₁)
+  m_sub = lm === nothing ? 1 : reshape(lm, 1, size(lm,1), size(lm,2))
+  m_del = lm === nothing ? 1 : reshape(lm, 1, size(lm,1), size(lm,2))
+  # BM note: I think we don't need this:
+  # Prefer insertion mask carried in Guide.cmask; fallback to lmask-derived
+  gmask = getcmask(X₁)
+  if gmask === nothing
+      m_ins = lm === nothing ? 1 : reshape(_gapmask_from_lmask(lm), 1, size(lm,1)+1, size(lm,2))
+  else
+      m_ins = reshape(gmask, 1, size(gmask,1), size(gmask,2))
+  end
+  # Positive Bregman D(tgt || pred)
+  loss = _masked_pos_breg(tgt.sub, pred.sub, c, m_sub) +
+         _masked_pos_breg(tgt.del, pred.del, c, m_del) +
+         _masked_pos_breg(tgt.ins, pred.ins, c, m_ins)
+  return loss
+end
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Fused front-end: sample + grouped Doob
 # ─────────────────────────────────────────────────────────────────────────────
@@ -869,15 +974,6 @@ function sample_and_doob_ud(rng::AbstractRNG, p::UniformDiscretePoissonIndelProc
 end
 =#
 
-function bridge(p::UniformDiscretePoissonIndelProcess, x0::DiscreteState{<:AbstractArray{<:Signed}}, x1::DiscreteState{<:AbstractArray{<:Signed}}, t)
-    if ndims(x0.state) != 1
-        error("bridge for UniformDiscretePoissonIndelProcess only implemented for 1D DiscreteState")
-    end
-    C = make_precomp(p, t)
-    flat_xt, _ = sample_Xt_ud(p, tensor(x0), tensor(x1), C)
-    xt = DiscreteState(x0.K, flat_xt)
-    return xt
-end
 
 #=
 using Pkg
@@ -995,6 +1091,50 @@ function Guide(P::UniformDiscretePoissonIndelProcess{T}, t::Real,
                X1::DiscreteState{<:AbstractArray{<:Signed}}) where {T}
     rates = doob_ud_full_tensors_fast(P, tensor(Xt), tensor(X1), T(t))
     return Flowfusion.Guide((sub = rates.sub, del = rates.del, ins = rates.ins))
+end
+
+
+"""
+    Guide(P::UniformDiscretePoissonIndelProcess, tvec, Xts, X1s)
+
+Build a batched Guide of full-tensor Doob rates for a batch of current states `Xts`
+and targets `X1s` at times `tvec`.
+
+Returns `Guide((sub, del, ins))` where shapes are:
+- sub :: (K, nmax, B)
+- del :: (1, nmax, B)
+- ins :: (K, nmax+1, B)
+Unfilled positions are zero and should be masked by the loss using letter/gap masks.
+"""
+function Guide(P::UniformDiscretePoissonIndelProcess{T},
+               tvec::AbstractVector{<:Real},
+               Xts::Vector{<:DiscreteState{<:AbstractArray{<:Signed}}},
+               X1s::Vector{<:DiscreteState{<:AbstractArray{<:Signed}}}) where {T}
+    B = length(Xts)
+    @assert B == length(X1s) == length(tvec)
+    lens = length.(tensor.(Xts))
+    nmax = maximum(lens)
+    K = P.k
+    # Match Guide dtype to tvec eltype to keep losses type-consistent with model
+    S = eltype(tvec)
+    sub = zeros(S, K, nmax, B)
+    del = zeros(S, 1, nmax, B)
+    ins = zeros(S, K, nmax + 1, B)
+    lmask = falses(nmax, B)
+    gapmask = falses(nmax + 1, B)
+    for b in 1:B
+        t = T(tvec[b])
+        Xt = Xts[b]
+        X1 = X1s[b]
+        rates = doob_ud_full_tensors_fast(P, tensor(Xt), tensor(X1), t)
+        n = length(tensor(Xt))
+        sub[:, 1:n, b] .= S.(rates.sub)
+        del[1, 1:n, b] .= S.(rates.del)
+        ins[:, 1:(n+1), b] .= S.(rates.ins)
+        lmask[1:n, b] .= true
+        gapmask[1:n+1, b] .= true
+    end
+    return Flowfusion.Guide((sub = sub, del = del, ins = ins), gapmask, lmask)
 end
 
 

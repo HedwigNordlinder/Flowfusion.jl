@@ -38,49 +38,6 @@ floss(P::Tuple, X̂₁::Tuple, X₁::Tuple, c::Union{AbstractArray, Real}) = sum
 floss(P::Tuple, X̂₁::Tuple, X₁::Tuple, c::Tuple) = sum(floss.(P, X̂₁, X₁, c))
 floss(P::Union{fbu(ManifoldProcess), fbu(Deterministic)}, ξhat, ξ::Guide, c) = scaledmaskedmean(mse(ξhat, ξ.H), c, getlmask(ξ))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PIP Doob-matching loss (positive Bregman on rates)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_pos_breg(p, q; eps = 1e-8) = p .* (log.(p .+ eps) .- log.(q .+ eps)) .- p .+ q
-
-function _gapmask_from_lmask(lmask::AbstractArray{Bool,2})
-    # lmask: (n, B) over letters; gaps are 1:(len+1).
-    # Vectorized construction (no mutation) to be AD-friendly.
-    n, B = size(lmask)
-    lens = vec(sum(lmask; dims=1))             # (B,)
-    s = reshape(1:(n + 1), n + 1, 1)           # (n+1,1)
-    return s .<= reshape(lens .+ 1, 1, B)      # (n+1,B) Bool
-end
-
-_expand_to(nd::Int, m) = expand(m, nd)
-
-function _masked_pos_breg(p::AbstractArray, q::AbstractArray, c, m)
-    return scaledmaskedmean(_pos_breg(p, q), c, m)
-end
-
-function floss(P::fbu(UniformDiscretePoissonIndelProcess), Xt::msu(DiscreteState), X̂₁, X₁::Guide, c)
-    # X̂₁.H and X₁.H are NamedTuples (sub, del, ins)
-    pred = X̂₁
-    tgt = X₁.H
-    # masks
-    lm = getlmask(Xt)
-    if lm === nothing
-        n = size(pred.del, 1)
-        B = ndims(pred.del) == 2 ? size(pred.del, 2) : 1
-        lm = B == 1 ? trues(n, 1) : trues(n, B)
-    end
-    gm = _gapmask_from_lmask(lm)
-    # expand masks to tensor dims
-    m_sub = _expand_to(ndims(pred.sub), reshape(lm, 1, size(lm,1), size(lm,2)))
-    m_del = _expand_to(ndims(pred.del), lm)
-    m_ins = _expand_to(ndims(pred.ins), reshape(gm, 1, size(gm,1), size(gm,2)))
-    loss = _masked_pos_breg(pred.sub, tgt.sub, c, m_sub) +
-            _masked_pos_breg(pred.del, tgt.del, c, m_del) +
-            _masked_pos_breg(pred.ins, tgt.ins, c, m_ins)
-    return loss
-end
-
 #I should make a self-balancing loss that tracks the running mean/std and adaptively scales to balance against target weights.
 
 ########################################################################
