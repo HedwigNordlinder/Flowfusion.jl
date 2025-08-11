@@ -21,7 +21,7 @@ decode(v::Vector{Int}) = join(ID2TOK[i] for i in v)
 
 # Process
 K = length(AAs)
-P = UniformDiscretePoissonIndelProcess(K; lambda = 0.5, mu = 0.005, alpha = 0.5)
+P = UniformDiscretePoissonIndelProcess(K; lambda = 0.1, mu = 0.1, alpha = 0.1)
 
 # Load real data and sample prefixes for x1
 data = let
@@ -94,21 +94,12 @@ function (m::PIPModel)(t::Vector{Float32}, Xt_raw::Matrix{Int})
     end
     # exclude START for real positions
     H_real = H[:, 2:end, :]                # (d, n, B)
-    d, n, _ = size(H_real)
     sub_logits = m.head_sub(H_real)        # (K, n, B)
     del_logits = m.head_del(H_real)        # (1, n, B)
     # Insertion logits from positions including the immortal START and the rightmost
-    # This yields (K, Lmax, B) where Lmax = n+1, aligning gaps 0..n
-    ins_logits = m.head_ins(H)                                      # (K, n+1, B)
-    sub = NNlib.softplus(sub_logits)
-    del = NNlib.softplus(del_logits)                 # (1, n, B)
-    ins = NNlib.softplus(ins_logits)
-    # leave token space unconstrained; only prevent self-substitution below
-    # Zero self-substitution via one-hot mask of real tokens
-    xt_real = Xt_raw
-    current_mask = onehotbatch(xt_real, 1:m.K)   # (K, n, B)
-    sub = sub .* (1 .- current_mask)
-    return (sub = sub, del = del, ins = ins)
+    ins_logits = m.head_ins(H)             # (K, n+1, B)
+    # Return raw logits; process transform and masking handled in loss/rollout
+    return (sub = sub_logits, del = del_logits, ins = ins_logits)
 end
 
 
@@ -131,11 +122,14 @@ function rollout(P, model::PIPModel, x0::DiscreteState, x1::DiscreteState; dt=0.
             @warn "maxlength reached"
             return break;
         end
-        rates = model([Float32(s1)], Xt_raw)
-        # Collapse singleton batch dims for stepping API
-        sub2 = Array(rates.sub[:, :, 1])            # (K, n)
-        del2 = vec(rates.del[1, :, 1])              # (n,)
-        ins2 = Array(rates.ins[:, :, 1])            # (K, n+1)
+        preds = model([Float32(s1)], Xt_raw)  # raw logits
+        # Apply process transform and zero self-substitutions before stepping
+        sub2 = Array(P.transform(preds.sub)[:, :, 1])  # (K, n)
+        del2 = vec(Array(P.transform(preds.del))[1, :, 1])  # (n,)
+        ins2 = Array(P.transform(preds.ins)[:, :, 1])  # (K, n+1)
+        # Zero self substitutions using current tokens
+        current_mask = onehotbatch(Xt_raw, 1:K)   # (K, n, 1)
+        sub2 .= sub2 .* (1 .- Array(current_mask)[:, :, 1])
         guide = Flowfusion.Guide((sub = sub2, del = del2, ins = ins2))
         Xt = Flowfusion.step(P, Xt, guide, s1, s2)
         traj[k+1] = tensor(Xt)
@@ -157,8 +151,7 @@ end
 
 # Model, optimiser
 model = PIPModel(; d=128, num_heads=8, nlayers=6, rff_dim=128, K=K)
-eta = 1e-3
-opt_state = Flux.setup(CannotWaitForTheseOptimisers.Muon(eta = eta), model);
+opt_state = Flux.setup(Optimisers.AdamW(1e-3), model);
 
 # Train (short by default; adjust with env vars)
 batch_size = parse(Int, get(ENV, "BATCH", "8"))
@@ -183,16 +176,8 @@ for epoch in 1:nepochs
         end
         Flux.update!(opt_state, model, grad[1])
         if step % 20 == 0
-            eta = eta * 0.9975
-            Optimisers.adjust!(opt_state, eta)
-            @info "train" epoch step loss=Float32(l) eta
+            @info "train" epoch step loss=Float32(l) eta=eta[]
         end
     end
     demo_samples(P, model; N=3)
 end
-
-
-
-
-
-
