@@ -1,3 +1,13 @@
+"""
+    abstract type IndelProcess <: Process
+
+Base type for processes with states that change size stochastically. Typically no closed form forward/backward operations.
+"""
+abstract type IndelProcess <: Process end
+abstract type DiscreteIndelProcess <: IndelProcess end
+abstract type ContinuousIndelProcess <: IndelProcess end #No concrete examples yet
+
+
 struct FProcess{A,B}
     P::A #Process
     F::B #Time transform
@@ -64,45 +74,3 @@ struct NoisyInterpolatingDiscreteFlow{T} <: ConvexInterpolatingDiscreteFlow
     dκ₂::Function   # derivative of κ₂
     mask_token::T   # the token that is used for the X0 state
 end
-
-
-
-
-
-
-
-"""
-    abstract type IndelProcess <: Process
-
-Base type for processes with states that change size stochastically. Typically no closed form forward/backward operations.
-"""
-abstract type IndelProcess <: Process end
-abstract type DiscreteIndelProcess <: IndelProcess end
-abstract type ContinuousIndelProcess <: IndelProcess end #No concrete examples yet
-
-"""
-    UniformDiscretePoissonIndelProcess(λ, μ, α, k)
-
-Model parameters for the Uniform Discrete PIP:
-- λ::T: insertion rate.
-- μ::T: deletion rate.
-- α::T: substitution rate parameter; off-diagonal instantaneous rate is α/k.
-- k::Int: alphabet size (tokens 1…k).
-
-For a branch of length s:
-- Survival of an existing letter: exp(-μ s).
-- Substitution kernel:
-    Pdiag(s) = exp(-α s) + (1 - exp(-α s))/k
-    Poff(s)  = (1 - exp(-α s))/k
-- Per-token insertion probability mass:
-    Iins(s) = λ * ((1 - exp(-μ s))/μ) / k
-"""
-
-struct UniformDiscretePoissonIndelProcess{T}  <: DiscreteIndelProcess
-  λ::T          # insertion rate
-  μ::T          # deletion rate
-  α::T          # substitution "decay" rate; pow(s) = exp(-α s)
-  k::Int        # alphabet size (tokens are Ints 1…k)
-end
-
-UniformDiscretePoissonIndelProcess(k ; lambda=1.0, mu=1.0, alpha=1.0) = UniformDiscretePoissonIndelProcess(lambda, mu, alpha, k)

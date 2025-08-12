@@ -78,6 +78,44 @@ Shapes and symbols (n := length(X_t), m := length(x1), K := p.k)
   - hcur :: scalar likelihood
 =#
 
+
+"""
+    UniformDiscretePoissonIndelProcess(λ, μ, α, k)
+
+Model parameters for the Uniform Discrete PIP:
+- λ::T: insertion rate.
+- μ::T: deletion rate.
+- α::T: substitution rate parameter; off-diagonal instantaneous rate is α/k.
+- k::Int: alphabet size (tokens 1…k).
+
+For a branch of length s:
+- Survival of an existing letter: exp(-μ s).
+- Substitution kernel:
+    Pdiag(s) = exp(-α s) + (1 - exp(-α s))/k
+    Poff(s)  = (1 - exp(-α s))/k
+- Per-token insertion probability mass:
+    Iins(s) = λ * ((1 - exp(-μ s))/μ) / k
+"""
+
+struct UniformDiscretePoissonIndelProcess{T}  <: DiscreteIndelProcess
+  λ::T          # insertion rate
+  μ::T          # deletion rate
+  α::T          # substitution "decay" rate; pow(s) = exp(-α s)
+  k::Int        # alphabet size (tokens are Ints 1…k)
+  transform::Function # maps unconstrained logits to valid rates (default NNlib.softplus)
+end
+
+# Backward-compatible convenience constructors
+UniformDiscretePoissonIndelProcess(k ; lambda=1.0, mu=1.0, alpha=1.0, transform = NNlib.softplus) =
+    UniformDiscretePoissonIndelProcess(lambda, mu, alpha, k, transform)
+
+UniformDiscretePoissonIndelProcess(λ::T, μ::T, α::T, k::Int) where {T} =
+    UniformDiscretePoissonIndelProcess{T}(λ, μ, α, k, NNlib.softplus)
+
+
+prefix(S::DiscreteState, k::Int) = DiscreteState(max(S.K,k), vcat(k, S.state))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -911,43 +949,23 @@ end
 # PIP Doob-matching loss (positive Bregman on rates)
 # Needs more thought
 # ─────────────────────────────────────────────────────────────────────────────
-
 function _pos_breg(p::AbstractArray{T}, q::AbstractArray{T}; eps = T(1e-8)) where {T}
   return p .* (log.(p .+ eps) .- log.(q .+ eps)) .- p .+ q
 end
 
-function _gapmask_from_lmask(lmask::AbstractArray{Bool,2})
-  # lmask: (n, B) over letters; gaps are 1:(len+1).
-  # Vectorized construction (no mutation) to be AD-friendly.
-  n, B = size(lmask)
-  lens = vec(sum(lmask; dims=1))             # (B,)
-  s = reshape(1:(n + 1), n + 1, 1)           # (n+1,1)
-  return s .<= reshape(lens .+ 1, 1, B)      # (n+1,B) Bool
-end
-
-function _masked_pos_breg(p::AbstractArray, q::AbstractArray, c, m)
-  return scaledmaskedmean(_pos_breg(p, q), c, m)
-end
-
-function floss(P::fbu(UniformDiscretePoissonIndelProcess), Xt::msu(DiscreteState), X̂₁, X₁::Guide, c)
-  # X̂₁.H and X₁.H are NamedTuples (sub, del, ins); Guide carries lmask
-  pred = X̂₁
-  tgt = X₁.H
-  lm = getlmask(X₁)
-  m_sub = lm === nothing ? 1 : reshape(lm, 1, size(lm,1), size(lm,2))
-  m_del = lm === nothing ? 1 : reshape(lm, 1, size(lm,1), size(lm,2))
-  # BM note: I think we don't need this:
-  # Prefer insertion mask carried in Guide.cmask; fallback to lmask-derived
-  gmask = getcmask(X₁)
-  if gmask === nothing
-      m_ins = lm === nothing ? 1 : reshape(_gapmask_from_lmask(lm), 1, size(lm,1)+1, size(lm,2))
-  else
-      m_ins = reshape(gmask, 1, size(gmask,1), size(gmask,2))
-  end
+#Xt must be a MaskedState with the prefix token
+function floss(P::fbu(UniformDiscretePoissonIndelProcess), Xt::MaskedState{<:DiscreteState}, X̂₁, G::Guide, c)
+  sub_rates = P.transform(X̂₁.sub)
+  del_rates = P.transform(X̂₁.del)
+  ins_rates = P.transform(X̂₁.ins)
+  # Zero self-substitutions using current tokens in Xt
+  #Ick. This is because of the mismatch between the model's "K" and the process's "k", where "batch" gives elements in the range of the former for padded tokens
+  ohXt = tensor(onehotbatch(clamp.(tensor(Xt)[2:end,:], 1, P.k), 1:P.k)) 
+  sub_rates = sub_rates .* (1 .- ohXt)
   # Positive Bregman D(tgt || pred)
-  loss = _masked_pos_breg(tgt.sub, pred.sub, c, m_sub) +
-         _masked_pos_breg(tgt.del, pred.del, c, m_del) +
-         _masked_pos_breg(tgt.ins, pred.ins, c, m_ins)
+  loss = scaledmaskedmean(_pos_breg(G.H.sub, sub_rates), c, getlmask(G)) +
+         scaledmaskedmean(_pos_breg(G.H.del, del_rates), c, getlmask(G)) +
+         scaledmaskedmean(_pos_breg(G.H.ins, ins_rates), c, getlmask(Xt)) #Use the Xt mask, which has a prefix, for the subs!
   return loss
 end
 
@@ -1151,25 +1169,27 @@ Only implemented for 1D `DiscreteState` without batch.
 """
 function step(P::UniformDiscretePoissonIndelProcess,
               Xt::DiscreteState{<:AbstractArray{<:Signed}},
-              guide::Flowfusion.Guide,
+              hat,
               s1::Real, s2::Real)
     # Extract hazards
     @assert ndims(Xt.state) == 1 "UniformDiscretePoissonIndelProcess.step only supports 1D DiscreteState"
-    rates = guide.H
-    sub = rates.sub
-    del = rates.del
-    ins = rates.ins
-    K, n = size(sub)
+    # Apply process transform and zero self-substitutions before stepping
+    sub = Array(P.transform(hat.sub)[:, :, 1])  # (K, n)
+    del = vec(Array(P.transform(hat.del))[1, :, 1])  # (n,)
+    ins = Array(P.transform(hat.ins)[:, :, 1])  # (K, n+1)
+    K, n = size(hat.sub)
+    # Zero self substitutions using current tokens
+    if size(tensor(Xt), 1) > 0
+      current_mask = tensor(onehot(Xt))[:,:,1] #onehotbatch(Xt_raw, 1:K)   # (K, n, 1)
+      sub .= sub .* (1 .- current_mask)
+    end
     @assert length(del) == n
     @assert size(ins, 1) == K && size(ins, 2) == n + 1
-
     dt = float(s2 - s1)
     x = collect(tensor(Xt))  # Vector{Int}
-
     # Site events: choose at most one per site using thinning
     to_delete = falses(n)
     sub_to = zeros(Int, n)    # 0 => no substitution; otherwise token id
-
     for i in 1:n
         r_del = del[i]
         r_sub_total = sum(@view sub[:, i])

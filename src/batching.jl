@@ -104,6 +104,10 @@ function batch(Xs::Vector{<:MaskedState})
     @assert !isempty(Xs)
     lens = _seqlen.(Xs)
     maxlen = maximum(lens)
+    longest = argmax(lens)
+    if maxlen == 0
+        error("At least one state must have a non-zero length to be batched.") #We should find a way to make this not be a restriction because it can kill a training run.
+    end
     b = length(Xs)
 
     # Build underlying stacked state from unmasked contents
