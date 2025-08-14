@@ -113,7 +113,7 @@ UniformDiscretePoissonIndelProcess(λ::T, μ::T, α::T, k::Int) where {T} =
     UniformDiscretePoissonIndelProcess{T}(λ, μ, α, k, NNlib.softplus)
 
 
-prefix(S::DiscreteState, k::Int) = DiscreteState(max(S.K,k), vcat(k, S.state))
+prefix(S::DiscreteState, k::Int; suffix = Int[]) = DiscreteState(max(S.K,k), vcat(k, S.state, suffix))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
