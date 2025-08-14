@@ -33,8 +33,8 @@ data = let
 end
 
 #Default: truncated samples for quicker testing
-function sample_pair(; lengthbound = 25)
-    x0 = DiscreteState(K, [TOK2ID['#'] for _ in 1:rand(1:30)])
+function sample_pair(; lengthbound = Inf)
+    x0 = DiscreteState(K, [TOK2ID['#'] for _ in 1:rand(1:60)])
     x1 = DiscreteState(K, encode(rand(data)[1:rand(1:Int(min(lengthbound,end)))]))
     return x0, x1
 end
@@ -92,7 +92,7 @@ function m(t,Xt)
     return model([t], Flowfusion.batch([Flowfusion.prefix(Xt, LEFT_IMMORTAL_ID, suffix = RIGHT_IMMORTAL_ID)]))
 end
 
-batch_size = 64
+batch_size = 16
 for epoch in 1:100
     for step in 1:500
         xpairs = [sample_pair() for _ in 1:batch_size]
@@ -103,7 +103,7 @@ for epoch in 1:100
         guide_tgt = Flowfusion.Guide(P, ts, Xts, x1s)
         # Batch current states once; use as loss masks and model input
         Xt_model = Flowfusion.batch(Flowfusion.prefix.(Xts, LEFT_IMMORTAL_ID, suffix = RIGHT_IMMORTAL_ID))
-        Xt_loss = MaskedState(DiscreteState(Xt_model.S.K-1, tensor(Xt_model)[1:end-1,:]), Xt_model.cmask[1:end-1,:], Xt_model.lmask[1:end-1,:])
+        Xt_loss = Flowfusion.batch(Flowfusion.prefix.(Xts, LEFT_IMMORTAL_ID))
         l, grad = Flux.withgradient(model) do m
             preds = m(ts, Xt_model)
             Flowfusion.floss(P, Xt_loss, preds, guide_tgt, scalefloss(P,ts,1))
