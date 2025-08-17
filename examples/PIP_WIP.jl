@@ -35,7 +35,8 @@ end
 #Default: truncated samples for quicker testing
 function sample_pair(; lengthbound = Inf)
     x0 = DiscreteState(K, [TOK2ID['#'] for _ in 1:rand(1:60)])
-    x1 = DiscreteState(K, encode(rand(data)[1:rand(1:Int(min(lengthbound,end)))]))
+    #x1 = DiscreteState(K, encode(rand(data)[1:rand(1:Int(min(lengthbound,end)))]))
+    x1 = DiscreteState(K, encode(rand(data)))
     return x0, x1
 end
 
@@ -110,7 +111,7 @@ for epoch in 1:100
         end
         Flux.update!(opt_state, model, grad[1])
         if step % 20 == 0
-            eta = eta * 0.999
+            eta = eta * 0.99975
             Flux.adjust!(opt_state, eta)
             @info "train" epoch step loss=Float32(l) eta=eta
         end
