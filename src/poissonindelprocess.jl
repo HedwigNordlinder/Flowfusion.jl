@@ -1261,3 +1261,486 @@ function step(P::UniformDiscretePoissonIndelProcess,
 
     return DiscreteState(Xt.K, result)
 end
+
+
+
+
+
+
+
+#=
+#Stand-alone for sampling Doob h rates conditioned on a single sampled alignment, including monte-carlo validation that 
+
+"""
+    UDParams(λ, μ, α, k)
+
+Uniform-Discrete Poisson–Indel Process parameters:
+- λ: insertion rate
+- μ: deletion rate
+- α: substitution rate parameter (off-diagonal instantaneous rate α/k)
+- k: alphabet size (tokens are Ints 1…k)
+"""
+struct UDParams{T}
+    λ::T
+    μ::T
+    α::T
+    k::Int
+end
+
+"""
+    BranchConst(p, t)
+
+Right-branch (length s=1-t) constants.
+Fields:
+- s::T          # branch length
+- s2::T         # survival e^{-μ s}
+- Pdiag::T      # substitution kernel diagonal over s
+- Poff::T       # substitution kernel off-diagonal over s
+- Iins::T       # per-token insertion mass over s: λ*((1 - s2)/μ)/k
+- q_off::T      # instantaneous off-diagonal sub rate α/k
+- q_ins::T      # instantaneous per-token insertion rate λ/k
+"""
+struct BranchConst{T}
+    s::T; s2::T
+    Pdiag::T; Poff::T
+    Iins::T
+    q_off::T
+    q_ins::T
+end
+
+pow_sub(α,t) = exp(-α*t)
+survival(μ,t) = exp(-μ*t)
+
+function branchconst(p::UDParams{T}, t::T) where {T}
+    s  = one(T) - t
+    s2 = survival(p.μ, s)
+    pow = pow_sub(p.α, s)
+    Pdiag = pow + (1 - pow)/p.k
+    Poff  = (1 - pow)/p.k
+    Iins  = p.λ * ((1 - s2)/p.μ) / p.k
+    BranchConst{T}(s, s2, Pdiag, Poff, Iins, p.α/p.k, p.λ/p.k)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilities
+# ─────────────────────────────────────────────────────────────────────────────
+
+@inline function logaddexp(a::T, b::T) where {T}
+    if a == -Inf; return b; end
+    if b == -Inf; return a; end
+    if b > a; a, b = b, a; end
+    return a + log1p(exp(b - a))
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Single-branch DP: log-space forward/backward, plus alignment sampling
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    dp_logs_single!(logF, logB, Xt, x1, B)
+
+Compute log-space forward (logF) and backward (logB) DPs for P(x1 | Xt) on right branch.
+Returns logh = log P(x1 | Xt).
+"""
+function dp_logs_single!(logF::AbstractMatrix{T}, logB::AbstractMatrix{T},
+                         Xt::Vector{Int}, x1::Vector{Int},
+                         B::BranchConst{T}) where {T}
+    n, m = length(Xt), length(x1)
+    # forward
+    fill!(logF, -Inf); logF[1,1] = zero(T)
+    log_del = log1p(-B.s2)
+    log_ins = log(B.q_ins) + log1p(-B.s2) - log(B.q_ins * B.s * 0 + 1) # not used; prefer direct Iins below
+    # NOTE: we use Iins directly (finite-horizon mass); so set:
+    log_Iins = log(B.Iins)
+    log_s2   = log(B.s2)
+    for i in 0:n, j in 0:m
+        f = logF[i+1, j+1]; f == -Inf && continue
+        if i < n
+            logF[i+2, j+1] = logaddexp(logF[i+2, j+1], f + log_del)
+        end
+        if j < m
+            logF[i+1, j+2] = logaddexp(logF[i+1, j+2], f + log_Iins)
+        end
+        if i < n && j < m
+            P = (Xt[i+1] == x1[j+1]) ? B.Pdiag : B.Poff
+            logF[i+2, j+2] = logaddexp(logF[i+2, j+2], f + log_s2 + log(P))
+        end
+    end
+    logh = logF[n+1, m+1]
+
+    # backward
+    fill!(logB, -Inf); logB[n+1, m+1] = zero(T)
+    for i in n:-1:0, j in m:-1:0
+        (i == n && j == m) && continue
+        acc = -Inf
+        if i < n
+            acc = logaddexp(acc, log_del + logB[i+2, j+1])
+        end
+        if j < m
+            acc = logaddexp(acc, log_Iins + logB[i+1, j+2])
+        end
+        if i < n && j < m
+            P = (Xt[i+1] == x1[j+1]) ? B.Pdiag : B.Poff
+            acc = logaddexp(acc, log_s2 + log(P) + logB[i+2, j+2])
+        end
+        logB[i+1, j+1] = acc
+    end
+    return logh
+end
+
+
+"""
+    AlignmentObligations
+
+Tags implied by a fixed alignment A*:
+- tag[i] ∈ (:match, :delete)
+- match_tok[i] valid iff tag[i]==:match
+- gap_queues[s+1] is a Vector{Int} of pending surviving insertions in gap s (0…n), in order.
+"""
+
+struct AlignmentObligations
+    tag::Vector{Symbol}
+    match_tok::Vector{Int}
+    gap_queues::Vector{Vector{Int}}
+end
+
+
+"""
+    sample_alignment_and_obligations(rng, Xt, x1, B)
+
+Sample a single-branch alignment path Xt ↔ x1 using log-backward DP, and
+build the corresponding obligations. Returns (obl, logh).
+"""
+function sample_alignment_and_obligations(rng::AbstractRNG,
+                                          Xt::Vector{Int}, x1::Vector{Int},
+                                          B::BranchConst{T}) where {T}
+    n, m = length(Xt), length(x1)
+    logF = fill(-Inf, n+1, m+1)
+    logB = similar(logF)
+    logh = dp_logs_single!(logF, logB, Xt, x1, B)
+
+    tag = Vector{Symbol}(undef, n)
+    match_tok = zeros(Int, n)
+    gaps = [Int[] for _ in 1:(n+1)]
+
+    # forward sampling using logB
+    i = 0; j = 0
+    log_del = log1p(-B.s2)
+    log_Iins = log(B.Iins)
+    log_s2 = log(B.s2)
+
+    while i < n || j < m
+        lD = -Inf; lI = -Inf; lR = -Inf
+        if i < n
+            lD = log_del + logB[i+2, j+1]
+        end
+        if j < m
+            lI = log_Iins + logB[i+1, j+2]
+        end
+        if i < n && j < m
+            P = (Xt[i+1] == x1[j+1]) ? B.Pdiag : B.Poff
+            lR = log_s2 + log(P) + logB[i+2, j+2]
+        end
+        # stabilize
+        lmax = maximum((lD, lI, lR))
+        if lmax == -Inf
+            # numerical safety: choose any valid move deterministically
+            if i < n && j < m
+                # prefer R if possible
+                tag[i+1] = :match; match_tok[i+1] = x1[j+1]; i += 1; j += 1
+            elseif i < n
+                tag[i+1] = :delete; i += 1
+            else
+                push!(gaps[i+1], x1[j+1]); j += 1
+            end
+            continue
+        end
+        wD = (i < n) ? exp(lD - lmax) : 0.0
+        wI = (j < m) ? exp(lI - lmax) : 0.0
+        wR = (i < n && j < m) ? exp(lR - lmax) : 0.0
+        s = wD + wI + wR
+        u = rand(rng) * s
+        if u < wD
+            tag[i+1] = :delete; i += 1
+        elseif u < wD + wI
+            push!(gaps[i+1], x1[j+1]); j += 1
+        else
+            tag[i+1] = :match; match_tok[i+1] = x1[j+1]; i += 1; j += 1
+        end
+    end
+
+    return AlignmentObligations(tag, match_tok, gaps), logh
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Doob h-transform hazards
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    doob_full_marginal(p, Xt, x1, t)
+
+Full marginal Doob hazards via inside–outside (log-space).
+Returns NamedTuple (sub::Array{T,2}, del::Vector{T}, ins::Array{T,2}, hcur::T).
+Shapes: sub (K,n), del (n), ins (K,n+1). Self-substitutions are zeroed.
+"""
+function doob_full_marginal(p::UDParams{T}, Xt::Vector{Int}, x1::Vector{Int}, t::T) where {T}
+    B = branchconst(p, t)
+    n, m, K = length(Xt), length(x1), p.k
+
+    # forward/backward
+    logF = fill(-Inf, n+1, m+1)
+    logB = similar(logF)
+    logh = dp_logs_single!(logF, logB, Xt, x1, B)
+
+    # token set in x1 for speed
+    seen = Dict{Int,Int}(); toks = Int[]
+    for b in x1
+        if !haskey(seen, b); seen[b] = length(seen) + 1; push!(toks, b); end
+    end
+    U = length(toks)
+
+    ΔP = B.Pdiag - B.Poff
+    q_off = B.q_off
+    q_ins = B.q_ins
+
+    # Substitutions (K,n)
+    sub = zeros(T, K, n)
+    for i in 1:n
+        # accumulate log-mass over j for matches that consume Xt[i] and x1[j]
+        tmp = fill(-Inf, U)
+        for j in 1:m
+            idx = get(seen, x1[j], 0)
+            if idx != 0
+                val = logF[i, j] + log(B.s2) + logB[i+1, j+1]
+                tmp[idx] = logaddexp(tmp[idx], val)
+            end
+        end
+        # convert to normalized ratios
+        r_tok = fill(zero(T), U)
+        for u in 1:U
+            r_tok[u] = tmp[u] == -Inf ? zero(T) : exp(tmp[u] - logh)
+        end
+        idx_a = get(seen, Xt[i], 0)
+        r_a = (idx_a == 0 || tmp[idx_a] == -Inf) ? zero(T) : exp(tmp[idx_a] - logh)
+
+        base_ratio = max(zero(T), 1 - ΔP * r_a)
+        @inbounds for c in 1:K
+            sub[c, i] = q_off * base_ratio
+        end
+        for (u, tok) in enumerate(toks)
+            ratio = max(zero(T), 1 + ΔP * (r_tok[u] - r_a))
+            sub[tok, i] = q_off * ratio
+        end
+        sub[Xt[i], i] = zero(T) # no self-sub
+    end
+
+    # Deletions (n)
+    del = zeros(T, n)
+    for i in 1:n
+        acc = -Inf
+        for j in 0:m
+            acc = logaddexp(acc, logF[i, j+1] + logB[i+1, j+1])
+        end
+        r = acc == -Inf ? zero(T) : exp(acc - logh)
+        del[i] = p.μ * r
+    end
+
+    # Insertions (K, n+1)
+    D_ratio = zeros(T, n+1)          # deletion-of-insert branch
+    M_ratio = zeros(T, U, n+1)       # token-specific match branch
+    for s in 0:n
+        # deletion-of-insert: sum_j F[s,j] * B[s,j]
+        accD = -Inf
+        for j in 0:m
+            accD = logaddexp(accD, logF[s+1, j+1] + logB[s+1, j+1])
+        end
+        D_ratio[s+1] = accD == -Inf ? zero(T) : exp(accD - logh)
+        # match-of-insert (careful indexing)
+        for j in 1:m
+            idx = get(seen, x1[j], 0)
+            if idx != 0
+                val = logF[s+1, j] + logB[s+1, j+1]
+                M_ratio[idx, s+1] += exp(val - logh)
+            end
+        end
+    end
+    S_ratio = vec(sum(M_ratio; dims=1))  # (n+1,)
+
+    ins = zeros(T, K, n+1)
+    for s in 0:n
+        base_ratio = (1 - B.s2) * D_ratio[s+1] + B.s2 * S_ratio[s+1] * B.Poff
+        base_ratio = max(zero(T), base_ratio)
+        @inbounds for c in 1:K
+            ins[c, s+1] = q_ins * base_ratio
+        end
+        for (u, tok) in enumerate(toks)
+            r_m = M_ratio[u, s+1]
+            val_ratio = (1 - B.s2) * D_ratio[s+1] + B.s2 * (r_m * B.Pdiag + (S_ratio[s+1] - r_m) * B.Poff)
+            ins[tok, s+1] = q_ins * max(zero(T), val_ratio)
+        end
+    end
+
+    return (sub=sub, del=del, ins=ins, hcur=exp(logh))
+end
+
+"""
+    doob_conditional_given_alignment(p, Xt, x1, t, obl)
+
+Alignment-conditioned Doob hazards for a fixed set of obligations.
+Returns (sub::Array{T,2}, del::Vector{T}, ins::Array{T,2}).
+"""
+function doob_conditional_given_alignment(p::UDParams{T},
+                                          Xt::Vector{Int}, x1::Vector{Int},
+                                          t::T, obl::AlignmentObligations) where {T}
+    B = branchconst(p, t)
+    n, K = length(Xt), p.k
+    sub = zeros(T, K, n)
+    del = zeros(T, n)
+    ins = zeros(T, K, n+1)
+
+    # per-site hazards
+    for i in 1:n
+        a = Xt[i]
+        if obl.tag[i] === :match
+            b = obl.match_tok[i]
+            # substitution to c != a: q_off * P(c->b)/P(a->b)
+            denom = (a == b) ? B.Pdiag : B.Poff
+            @inbounds for c in 1:K
+                if c != a
+                    num = (c == b) ? B.Pdiag : B.Poff
+                    sub[c, i] = B.q_off * (num / denom)
+                end
+            end
+            del[i] = zero(T)   # cannot delete a must-match site
+        else
+            # must-delete: substitutions are neutral wrt h, deletions are forced
+            @inbounds for c in 1:K
+                if c != a
+                    sub[c, i] = B.q_off
+                end
+            end
+            del[i] = p.μ / max(eps(T), (1 - B.s2))  # μ/(1-s2)
+        end
+    end
+    # per-gap insertions  (FIXED: include (L+1) transient multiplicity)
+    for s in 0:n
+        q = obl.gap_queues[s+1]
+        L = length(q)
+        # Transient branch: an extra insert can be deleted in any of (L+1) slots along the fixed path
+        base = B.q_ins * (1 - B.s2) * (L + 1)
+
+        if L == 0
+            @inbounds for c in 1:K
+                ins[c, s+1] = base
+            end
+        else
+            # Productive branch: inserting c can fulfill ANY of the L pending survivors in this gap.
+            # Replacing one Iins factor by s2*P(c->r) for r in q, summed over all r.
+            cnt = zeros(Int, K)
+            @inbounds for r in q
+                cnt[r] += 1
+            end
+            factor = p.μ * B.s2 / max(eps(T), (1 - B.s2))  # μ s2 / (1 - s2)
+            @inbounds for c in 1:K
+                # sum_{r in q} P(c->r) = cnt[c]*Pdiag + (L - cnt[c])*Poff
+                sumP = cnt[c] * B.Pdiag + (L - cnt[c]) * B.Poff
+                ins[c, s+1] = base + factor * sumP
+            end
+        end
+    end
+    return (sub=sub, del=del, ins=ins)
+end
+
+"""
+    doob_conditional_sampled(p, rng, Xt, x1, t)
+
+Sample an alignment, build obligations, and return alignment-conditioned hazards.
+Returns (rates, obligations, hA), where rates=(sub,del,ins) and hA is the alignment mass.
+"""
+function doob_conditional_sampled(p::UDParams{T}, rng::AbstractRNG,
+                                  Xt::Vector{Int}, x1::Vector{Int}, t::T) where {T}
+    B = branchconst(p, t)
+    obl, logh = sample_alignment_and_obligations(rng, Xt, x1, B)
+    rates = doob_conditional_given_alignment(p, Xt, x1, t, obl)
+    return rates, obl, exp(logh)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validation: average over alignments vs. marginal hazards
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    validate_conditional_vs_marginal(p, Xt, x1, t; N=50_000, seed=42)
+
+Monte Carlo check: sample N alignments, average conditional hazards,
+compare to full marginal hazards. Returns a NamedTuple with:
+- diffs: (sub_max, del_max, ins_max) maximum absolute errors
+- rel:   (sub_relL2, del_relL2, ins_relL2) relative L2 errors
+- marginal: (sub, del, ins)
+- montecarlo: (sub̄, del̄, ins̄)
+"""
+function validate_conditional_vs_marginal(p::UDParams{T},
+                                          Xt::Vector{Int}, x1::Vector{Int},
+                                          t::T; N::Int=50_000, seed=42) where {T}
+    rng = MersenneTwister(seed)
+    K, n = p.k, length(Xt)
+
+    acc_sub = zeros(T, K, n)
+    acc_del = zeros(T, n)
+    acc_ins = zeros(T, K, n+1)
+
+    for _ in 1:N
+        rates, _, _ = doob_conditional_sampled(p, rng, Xt, x1, t)
+        @inbounds acc_sub .+= rates.sub
+        @inbounds acc_del .+= rates.del
+        @inbounds acc_ins .+= rates.ins
+    end
+    sub̄ = acc_sub ./ N
+    del̄ = acc_del ./ N
+    ins̄ = acc_ins ./ N
+
+    marg = doob_full_marginal(p, Xt, x1, t)
+
+    # errors
+    sub_max = maximum(abs.(sub̄ .- marg.sub))
+    del_max = maximum(abs.(del̄ .- marg.del))
+    ins_max = maximum(abs.(ins̄ .- marg.ins))
+
+    # relative L2 (guard tiny norms)
+    function relL2(A, B)
+        nA = sqrt(sum(abs2, A)); nB = sqrt(sum(abs2, B))
+        denom = max(nB, eps(T))
+        sqrt(sum(abs2, A .- B)) / denom
+    end
+    sub_rel = relL2(sub̄, marg.sub)
+    del_rel = relL2(del̄, marg.del)
+    ins_rel = relL2(ins̄, marg.ins)
+
+    return (diffs = (sub_max=sub_max, del_max=del_max, ins_max=ins_max),
+            rel   = (sub_relL2=sub_rel, del_relL2=del_rel, ins_relL2=ins_rel),
+            marginal = (sub=marg.sub, del=marg.del, ins=marg.ins),
+            montecarlo = (sub=sub̄, del=del̄, ins=ins̄))
+end
+
+#=
+p = UDParams(0.3, 0.3, 0.5, 6)
+Xt = [1,6]              # current sequence at time t
+x1 = [1,2,4,6]            # leaf
+t  = 0.35               # in [0,1)
+
+res = validate_conditional_vs_marginal(p, Xt, x1, t; N=10_000_000, seed=7);
+
+res.marginal.ins
+res.montecarlo.ins
+
+res.marginal.del
+res.montecarlo.del
+
+res.marginal.sub
+res.montecarlo.sub
+
+res.marginal.ins .- res.montecarlo.ins
+res.marginal.del .- res.montecarlo.del
+res.marginal.sub .- res.montecarlo.sub
+=#
+=#
