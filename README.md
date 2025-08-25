@@ -9,7 +9,7 @@ Flowfusion.jl is a Julia package for training and sampling from diffusion and fl
 
 ![Image](https://github.com/user-attachments/assets/ff7f25e6-441d-4840-ac9c-a849e7b57aa7)
 
-The animated logo shows samples from a model trained to jointly transport a 2D point and an angular hue between two distributions. For the 2D point, the left side uses "Flow matching" with deterministic trajectories, and the right uses a Brownian bridge. For both sides, the angular hue is diffused via an angular Brownian bridge. The hue endpoints are antipodal, and you can see both paths, in opposite angular directions, are sampled.
+The animated logo shows samples from a model trained to jointly transport a 2D point and an angular hue between two distributions. For the 2D point, the left side uses Flow matching with deterministic trajectories, and the right uses a Brownian bridge. For both sides, the angular hue is diffused via an angular Brownian bridge. The hue endpoints are antipodal, and you can see both paths, in opposite angular directions, are sampled.
 
 ## Features
 
@@ -17,13 +17,13 @@ The animated logo shows samples from a model trained to jointly transport a 2D p
 - Conditioning via masking
 - States: Continuous, discrete, and a wide variety of manifolds supported (via [Manifolds.jl](https://github.com/JuliaManifolds/Manifolds.jl))
 - Compound states supported (e.g. jointly sampling from both continuous and discrete variables)
-- Controllable noise (or fully deterministic for flow matching)
+- Controllable noise (or fully deterministic paths)
 - Time-scaling schedules (see `examples/logo_example.jl`)
 
 ### Basic idea:
 - Generate `X0` and `X1` states from your favorite distribution, and a random `t` between 0 and 1
 - `Xt = bridge(P, X0, X1, t)`: Sample intermediate states conditioned on start and end states
-- Train model to predict how to get to `X1` from `Xt`
+- Train model to predict how to move towards `X1` from `Xt`
 - `gen(P, X0, model, steps)`: Generate sequences using a learned model
 
 ## Examples
@@ -146,7 +146,7 @@ scatter!(samples.state[1,:],samples.state[2,:], msw = 0, ms = 1, color = "green"
 
 These can be found in [examples](https://github.com/MurrellGroup/Flowfusion.jl/tree/main/examples).
 
-### Flow matching
+### Deterministic Flow matching
 
 with `P = Deterministic()`
 
@@ -158,7 +158,7 @@ with `P = Deterministic()` and `X0 = ManifoldState(Torus(2), ...)`
 
 ![Image](https://github.com/user-attachments/assets/b6a1a27f-f0fc-4bc4-af10-bb8b5e7aa8cf)
 
-### Diffusion on a manifold
+### Brownian Bridge Flow Matching on a manifold
 
 with `P = ManifoldProcess(0.2)` and `X0 = ManifoldState(Torus(2), ...)`:
 
@@ -176,7 +176,7 @@ with `X0 = MaskedState(state, cmask, lmask)`
 
 ![Image](https://github.com/user-attachments/assets/e3e84290-2a57-4d2d-8ebc-ad91800e8fea)
 
-### Discrete distributions via diffusion on the probability simplex
+### Discrete distributions via Brownian bridge flow matching on the probability simplex
 
 with `P = ManifoldProcess(0.5)` and `X0 = ManifoldState(ProbabilitySimplex(32), ...)`:
 
