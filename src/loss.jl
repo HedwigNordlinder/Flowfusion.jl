@@ -69,3 +69,5 @@ end
 function so3_tangent_coordinates_stack(rhat::AbstractArray{T,4}, r::AbstractArray{T,4}) where T
     return reshape(so3_tangent_coordinates_stack(reshape(rhat, 3, 3, :), reshape(r, 3, 3, :)), 3, size(rhat,3), size(rhat,4))
 end
+floss(P::fbu(SwitchingBM), X̂₁, X₁::msu(ContinuousState), c) =
+    scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))

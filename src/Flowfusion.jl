@@ -27,7 +27,6 @@ include("bridge.jl")
 include("loss.jl")
 include("processes.jl")
 include("doob.jl")
-
 include("batching.jl")
 
 export
@@ -50,7 +49,8 @@ export
     tcloss,
     dense,
     batch,
-    regroup
+    regroup,
+    SwitchingBM
 
 
 #Useful for demos etc:
