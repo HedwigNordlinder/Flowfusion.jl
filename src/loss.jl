@@ -71,3 +71,5 @@ function so3_tangent_coordinates_stack(rhat::AbstractArray{T,4}, r::AbstractArra
 end
 floss(P::fbu(SwitchingBM), X̂₁, X₁::msu(ContinuousState), c) =
     scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
+floss(P::fbu(SDEProcess), X̂₁, X₁::msu(ContinuousState), c) =
+    scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
