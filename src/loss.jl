@@ -73,3 +73,6 @@ floss(P::fbu(SwitchingBM), X̂₁, X₁::msu(ContinuousState), c) =
     scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
 floss(P::fbu(SDEProcess), X̂₁, X₁::msu(ContinuousState), c) =
     scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
+# Add loss for SwitchingSDEProcess: predict continuous endpoint only; Q not learned
+floss(P::fbu(SwitchingSDEProcess), X̂₁, X₁::msu(ContinuousState), c) =
+    scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
