@@ -79,3 +79,118 @@ floss(P::fbu(SwitchingSDEProcess), X̂₁, X₁::msu(ContinuousState), c) =
 
 floss(P::fbu(ConditionalBridgeProcess), X̂₁, X₁::msu(ContinuousState), c) =
     scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
+
+# ==========================
+# CTMC-marginalized direction loss for ConditionalBridgeProcess (Euclidean)
+# ==========================
+
+# Unit vector utility (robust to near-zero norms)
+@inline function _unit_vec(v::AbstractVector{T}; eps::T=T(1e-12)) where {T<:Real}
+    n = sqrt(sum(abs2, v))
+    if n > eps
+        @. v / n
+    else
+        out = zero.(v)
+        if !isempty(out)
+            out[1] = one(T)
+        end
+        out
+    end
+end
+
+# Deterministic alternate anchor for loss: along (a - x) direction
+@inline function _alt_anchor_det(a::AbstractVector{T}, x::AbstractVector{T}, r::T) where {T<:Real}
+    u = _unit_vec(@. a - x)
+    @. a + r * u
+end
+
+# Local hazard to true endpoint (mirrors process hazard)
+@inline _λ_to_a_loss(κ::T, τ::T, T_end::T) where {T<:Real} = κ / max(T(1e-12), T_end - τ)
+
+# One-column CTMC-marginalized direction
+@inline function _ctmc_marginal_direction_col(P::ConditionalBridgeProcess{T},
+                                              x::AbstractVector{T},
+                                              a::AbstractVector{T},
+                                              s_current::Int,
+                                              τ::T, T_end::T, ε::T) where {T<:Real}
+    v_a = @. a - x
+    b   = _alt_anchor_det(a, x, P.ε * P.σ)
+    v_b = @. b - x
+
+    p = (s_current == 1) ? one(T) : zero(T)                  # prob to-a at time τ
+    λ_ba = _λ_to_a_loss(P.κ, τ, T_end)                       # b -> a
+    λ_ab = P.λ_b                                             # a -> b
+    p_next = clamp(p + ε * ((one(T) - p) * λ_ba - p * λ_ab), zero(T), one(T))
+
+    @. (p_next * v_a) + ((one(T) - p_next) * v_b)
+end
+
+# Batched CTMC-marginalized direction (D×N)
+function _ctmc_marginal_direction(P::ConditionalBridgeProcess{T},
+                                  Xτ::ConditionalBridgeState{T},
+                                  X₁::ContinuousState{T},
+                                  τ, T_end, ε::T) where {T<:Real}
+    x = tensor(Xτ.continuous_state)  # D×N
+    a = tensor(X₁)                   # D×N
+    s = Xτ.anchor_state              # N (1=>a, 2=>b)
+    D, N = size(x)
+    out = similar(x)
+    τn(n)    = (τ isa AbstractVector ? τ[n] : τ)
+    Tendn(n) = (T_end isa AbstractVector ? T_end[n] : T_end)
+    @inbounds for n in 1:N
+        @views out[:, n] .= _ctmc_marginal_direction_col(P, x[:, n], a[:, n], s[n], τn(n), Tendn(n), ε)
+    end
+    out
+end
+
+# Convert model output to direction if it is an endpoint
+@inline function _to_direction_from_endpoint(d̂_or_X̂₁, Xτ_cont)
+    X̂ = tensor(d̂_or_X̂₁)
+    Xt = tensor(Xτ_cont)
+    if size(X̂) == size(Xt)
+        return X̂ .- Xt
+    else
+        return X̂
+    end
+end
+
+# Loss comparing predicted direction to CTMC-marginalized direction (or true direction)
+function floss(P::fbu(ConditionalBridgeProcess),
+               Xτ::msu(ConditionalBridgeState),
+               d̂_or_X̂₁,
+               X₁::msu(ContinuousState),
+               c; τ,
+               T_end=nothing,
+               ε=nothing,
+               normalize::Bool=false,
+               target::Symbol=:ctmc)
+    # Handle FProcess wrapper
+    baseP = process(P)
+    T = eltype(tensor(X₁))
+    τval = τ
+    Tend = isnothing(T_end) ? one(T) : T_end
+    εval = isnothing(ε) ? T(1e-3) : ε
+
+    # Predicted direction (D×N)
+    Xτu = unmask(Xτ)
+    d̂ = _to_direction_from_endpoint(d̂_or_X̂₁, Xτu.continuous_state)
+
+    # Target direction
+    target_dir = if target === :ctmc
+        _ctmc_marginal_direction(baseP, Xτu, unmask(X₁), τval, Tend, εval)
+    elseif target === :true
+        tensor(unmask(X₁)) .- tensor(Xτu.continuous_state)
+    else
+        throw(ArgumentError("Unsupported target=:$(target). Use :ctmc or :true"))
+    end
+
+    if normalize
+        epsn = T(1e-12)
+        nd = sqrt.(sum(abs2, d̂; dims=1)) .+ epsn
+        nt = sqrt.(sum(abs2, target_dir; dims=1)) .+ epsn
+        d̂ = d̂ ./ nd
+        target_dir = target_dir ./ nt
+    end
+
+    scaledmaskedmean(mse(d̂, target_dir), c, getlmask(X₁))
+end
