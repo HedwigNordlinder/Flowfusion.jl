@@ -86,15 +86,9 @@ floss(P::fbu(SwitchingSDEProcess), X̂₁, X₁::msu(ContinuousState), c) =
 # Unit vector utility (robust to near-zero norms)
 @inline function _unit_vec(v::AbstractVector{T}; eps::T=T(1e-12)) where {T<:Real}
     n = sqrt(sum(abs2, v))
-    if n > eps
-        @. v / n
-    else
-        out = zero.(v)
-        if !isempty(out)
-            out[1] = one(T)
-        end
-        out
-    end
+    n > eps && return (@. v / n)
+    # Return a fresh unit vector e1 of appropriate length without mutation
+    return vcat(one(T), zeros(T, max(length(v) - 1, 0)))
 end
 
 # Deterministic alternate anchor for loss: along (a - x) direction
@@ -134,13 +128,13 @@ function _ctmc_marginal_direction(P::ConditionalBridgeProcess{T},
     a = tensor(X₁)                   # D×N
     s = Xτ.anchor_state              # N (1=>a, 2=>b)
     D, N = size(x)
-    out = similar(x)
     τn(n)    = (τ isa AbstractVector ? τ[n] : τ)
     Tendn(n) = (T_end isa AbstractVector ? T_end[n] : T_end)
-    @inbounds for n in 1:N
-        @views out[:, n] .= _ctmc_marginal_direction_col(P, x[:, n], a[:, n], s[n], τn(n), Tendn(n), ε)
+    cols = map(1:N) do n
+        _ctmc_marginal_direction_col(P, view(x, :, n), view(a, :, n), s[n], τn(n), Tendn(n), ε)
     end
-    out
+    # hcat the columns into a D×N matrix (handles N>=1). For N==0, return x (empty).
+    return N > 0 ? reduce(hcat, cols) : x
 end
 
 # Convert model output to direction if it is an endpoint
