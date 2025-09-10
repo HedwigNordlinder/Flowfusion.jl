@@ -117,12 +117,13 @@ end
     b   = _alt_anchor_det(a, x, P.ε * P.σ)
     v_b = @. b - x
 
-    p = (s_current == 1) ? one(T) : zero(T)                  # prob to-a at time τ
-    λ_ba = _λ_to_a_loss(P.κ, τ, T_end)                       # b -> a
-    λ_ab = P.λ_b                                             # a -> b
-    p_next = clamp(p + ε * ((one(T) - p) * λ_ba - p * λ_ab), zero(T), one(T))
+    # Instantaneous mixture at current time τ (no forward ε step)
+    λ_ba = _λ_to_a_loss(P.κ, τ, T_end)   # b -> a
+    λ_ab = P.λ_b                         # a -> b
+    denom = max(T(1e-12), λ_ba + λ_ab)
+    p_a = λ_ba / denom                   # instantaneous mixture weight for anchor a
 
-    @. (p_next * v_a) + ((one(T) - p_next) * v_b)
+    @. (p_a * v_a) + ((one(T) - p_a) * v_b)
 end
 
 # Batched CTMC-marginalized direction (D×N)
