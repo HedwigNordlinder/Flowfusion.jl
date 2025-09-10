@@ -77,8 +77,7 @@ floss(P::fbu(SDEProcess), X̂₁, X₁::msu(ContinuousState), c) =
 floss(P::fbu(SwitchingSDEProcess), X̂₁, X₁::msu(ContinuousState), c) =
     scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
 
-floss(P::fbu(ConditionalBridgeProcess), X̂₁, X₁::msu(ContinuousState), c) =
-    scaledmaskedmean(mse(X̂₁, X₁), c, getlmask(X₁))
+
 
 # ==========================
 # CTMC-marginalized direction loss for ConditionalBridgeProcess (Euclidean)
