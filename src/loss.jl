@@ -70,27 +70,21 @@ function so3_tangent_coordinates_stack(rhat::AbstractArray{T,4}, r::AbstractArra
     return reshape(so3_tangent_coordinates_stack(reshape(rhat, 3, 3, :), reshape(r, 3, 3, :)), 3, size(rhat,3), size(rhat,4))
 end
 function floss(p::fbu(SwitchBridgeProcess), X̂₁, X₁::msu(ContinuousState), c)
-    # Weighted loss between aiming for the true endpoint and an alternative endpoint.
-    # Notes/assumptions:
-    # - ForwardBackward's SwitchBridgeProcess switches between two Brownian bridges with
-    #   constant rates λ_alt (orig→alt) and λ_orig (alt→orig).
-    # - We marginalise the loss by weighting the two targets by their switching probabilities
-    #   over the remaining time. In absence of explicit time here, we infer t from the
-    #   default `scalefloss` schedule if `c` was produced by it; otherwise this reduces to
-    #   stationary weights λ/(λ+λ).
-    # - If no alternative endpoint is provided, we default to zeros of X₁'s shape, which
-    #   matches the common case where X₀ is the origin. See the 2-arg Tuple overload below
-    #   to pass an explicit alternative endpoint.
+    # Loss marginalisation for ForwardBackward.SwitchBridgeProcess using Doob h-transform.
+    # We condition on ending at the true endpoint (orig regime at t=1). Under this
+    # conditioning, the switching rates are q^h_{i→j}(t) = q_{i→j} * h_j(t) / h_i(t),
+    # where h(t) solves the backward equation ∂ₜ h(t) = -Q h(t), h(1) = [1, 0].
+    # We convert these rates into mixture weights between the two endpoints using the
+    # incoming rates into each regime under q^h.
 
     # Helper to evaluate λ fields whether they are Functions or scalars
-    λ_alt_val(x) = (p.λ_alt isa Function) ? p.λ_alt(x) : p.λ_alt
-    λ_orig_val(x) = (p.λ_orig isa Function) ? p.λ_orig(x) : p.λ_orig
+    λ_alt_val(x) = (p.λ_alt isa Function) ? p.λ_alt(x) : p.λ_alt   # orig→alt
+    λ_orig_val(x) = (p.λ_orig isa Function) ? p.λ_orig(x) : p.λ_orig # alt→orig
 
     T = eltype(tensor(unmask(X₁)))
     eps = T(1e-12)
 
-    # Try to infer current time t from the loss scale c, assuming default scalefloss: 1/((1+ϵ)-t)^2
-    # If `c` did not come from scalefloss, clamp to a safe mid value.
+    # Infer current time t from default scalefloss c ≈ 1/((1+ϵ)-t)^2, else clamp
     infer_t(cval) = begin
         ϵ = T(0.05)
         pow = T(2)
@@ -98,23 +92,55 @@ function floss(p::fbu(SwitchBridgeProcess), X̂₁, X₁::msu(ContinuousState), 
         clamp.(tc, T(0), T(1))
     end
 
-    # Broadcast t to the loss tensor's dimensionality
     t_like_c = isa(c, Real) ? fill(T(c), 1) : T.(c)
     t_est = infer_t(t_like_c)
-    # Remaining time r = 1 - t
-    r = max.(T(0), T(1) .- t_est)
+    r = max.(T(0), T(1) .- t_est) # remaining time
 
-    # Instantaneous mixture weights: proportional to incoming rates into each regime.
-    # Scale the rate toward the true endpoint by 1/(1 - t).
-    # Broadcast remaining time to the state shape for safe elementwise ops.
     Xtrue = tensor(unmask(X₁))
-    r_safe = max.(expand(r, ndims(Xtrue)), eps)
-    λα = λ_alt_val(unmask(X₁))
-    λo = λ_orig_val(unmask(X₁))
-    λo_eff = λo ./ r_safe
-    Z = λα .+ λo_eff .+ eps
-    w_orig = λo_eff ./ Z
-    w_alt = λα ./ Z
+
+    # Evaluate base switching rates per-sample (shared across dims) to match the
+    # process definition where the discrete regime is common to all coordinates.
+    # Shape conventions: Xtrue ≈ (D, ...batch_axes)
+    tail_shape = size(Xtrue)[2:end]
+    # Build a helper to evaluate a possibly state-dependent rate on each sample vector
+    function _eval_rate(param, X)
+        if param isa Function
+            if isempty(tail_shape)
+                v = param(view(X, :,))
+                reshape(T(v), ())
+            else
+                out = Array{T}(undef, tail_shape...)
+                for J in CartesianIndices(Tuple(tail_shape))
+                    out[J] = T(param(view(X, :, Tuple(J)...)))
+                end
+                out
+            end
+        else
+            fill(T(param), tail_shape...)
+        end
+    end
+
+    λα = _eval_rate(λ_alt_val, Xtrue)
+    λo = _eval_rate(λ_orig_val, Xtrue)
+    # Insert a leading singleton dim so rates broadcast across coordinates
+    λα = reshape(λα, (ones(Int, max(1, ndims(Xtrue) - length(size(λα))))..., size(λα)...))
+    λo = reshape(λo, (ones(Int, max(1, ndims(Xtrue) - length(size(λo))))..., size(λo)...))
+
+    s = λα .+ λo .+ eps
+    πo = λo ./ s
+    # h for remaining time r: h_o = πo + (1-πo) e^{-s r}, h_a = πo - πo e^{-s r}
+    er = exp.(-expand(r, ndims(Xtrue)) .* s)
+    h_o = clamp.(πo .+ (1 .- πo) .* er, eps, T(Inf))
+    h_a = clamp.(πo .- πo .* er, eps, T(Inf))
+
+    # Doob-transformed rates
+    qh_o2a = λα .* (h_a ./ h_o)            # orig → alt under conditioning
+    qh_a2o = λo .* (h_o ./ h_a)            # alt  → orig under conditioning
+
+    # Mixture weights proportional to incoming rates under q^h
+    Z = qh_o2a .+ qh_a2o .+ eps
+    w_orig = qh_a2o ./ Z
+    w_alt  = qh_o2a ./ Z
 
     # Targets: true endpoint and alternative endpoint (defaults to zeros)
     Xalt = zero.(Xtrue)
@@ -130,10 +156,9 @@ end
 # Overload that allows passing an explicit alternative endpoint alongside the true endpoint.
 function floss(p::fbu(SwitchBridgeProcess), X̂₁, X::Tuple{<:msu(ContinuousState),<:msu(ContinuousState)}, c)
     X₁, Xalt = X
-    # Reuse the primary method but substitute the internal alternative endpoint.
-    # We temporarily compute the weighted loss components here for clarity.
-    λ_alt_val(x) = (p.λ_alt isa Function) ? p.λ_alt(x) : p.λ_alt
-    λ_orig_val(x) = (p.λ_orig isa Function) ? p.λ_orig(x) : p.λ_orig
+
+    λ_alt_val(x) = (p.λ_alt isa Function) ? p.λ_alt(x) : p.λ_alt   # orig→alt
+    λ_orig_val(x) = (p.λ_orig isa Function) ? p.λ_orig(x) : p.λ_orig # alt→orig
 
     T = eltype(tensor(unmask(X₁)))
     eps = T(1e-12)
@@ -150,13 +175,40 @@ function floss(p::fbu(SwitchBridgeProcess), X̂₁, X::Tuple{<:msu(ContinuousSta
     r = max.(T(0), T(1) .- t_est)
 
     Xtrue = tensor(unmask(X₁))
-    r_safe = max.(expand(r, ndims(Xtrue)), eps)
-    λα = λ_alt_val(unmask(X₁))
-    λo = λ_orig_val(unmask(X₁))
-    λo_eff = λo ./ r_safe
-    Z = λα .+ λo_eff .+ eps
-    w_orig = λo_eff ./ Z
-    w_alt = λα ./ Z
+    tail_shape = size(Xtrue)[2:end]
+    # Per-sample base rates, consistent with shared regime across dims
+    function _eval_rate(param, X)
+        if param isa Function
+            if isempty(tail_shape)
+                v = param(view(X, :,))
+                reshape(T(v), ())
+            else
+                out = Array{T}(undef, tail_shape...)
+                for J in CartesianIndices(Tuple(tail_shape))
+                    out[J] = T(param(view(X, :, Tuple(J)...)))
+                end
+                out
+            end
+        else
+            fill(T(param), tail_shape...)
+        end
+    end
+
+    λα = _eval_rate(λ_alt_val, Xtrue)
+    λo = _eval_rate(λ_orig_val, Xtrue)
+    λα = reshape(λα, (ones(Int, max(1, ndims(Xtrue) - length(size(λα))))..., size(λα)...))
+    λo = reshape(λo, (ones(Int, max(1, ndims(Xtrue) - length(size(λo))))..., size(λo)...))
+    s = λα .+ λo .+ eps
+    πo = λo ./ s
+    er = exp.(-expand(r, ndims(Xtrue)) .* s)
+    h_o = clamp.(πo .+ (1 .- πo) .* er, eps, T(Inf))
+    h_a = clamp.(πo .- πo .* er, eps, T(Inf))
+
+    qh_o2a = λα .* (h_a ./ h_o)
+    qh_a2o = λo .* (h_o ./ h_a)
+    Z = qh_o2a .+ qh_a2o .+ eps
+    w_orig = qh_a2o ./ Z
+    w_alt  = qh_o2a ./ Z
 
     Xtrue = tensor(unmask(X₁))
     Xalternative = tensor(unmask(Xalt))
