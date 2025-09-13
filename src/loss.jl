@@ -69,3 +69,99 @@ end
 function so3_tangent_coordinates_stack(rhat::AbstractArray{T,4}, r::AbstractArray{T,4}) where T
     return reshape(so3_tangent_coordinates_stack(reshape(rhat, 3, 3, :), reshape(r, 3, 3, :)), 3, size(rhat,3), size(rhat,4))
 end
+function floss(p::fbu(SwitchBridgeProcess), X̂₁, X₁::msu(ContinuousState), c)
+    # Weighted loss between aiming for the true endpoint and an alternative endpoint.
+    # Notes/assumptions:
+    # - ForwardBackward's SwitchBridgeProcess switches between two Brownian bridges with
+    #   constant rates λ_alt (orig→alt) and λ_orig (alt→orig).
+    # - We marginalise the loss by weighting the two targets by their switching probabilities
+    #   over the remaining time. In absence of explicit time here, we infer t from the
+    #   default `scalefloss` schedule if `c` was produced by it; otherwise this reduces to
+    #   stationary weights λ/(λ+λ).
+    # - If no alternative endpoint is provided, we default to zeros of X₁'s shape, which
+    #   matches the common case where X₀ is the origin. See the 2-arg Tuple overload below
+    #   to pass an explicit alternative endpoint.
+
+    # Helper to evaluate λ fields whether they are Functions or scalars
+    λ_alt_val(x) = (p.λ_alt isa Function) ? p.λ_alt(x) : p.λ_alt
+    λ_orig_val(x) = (p.λ_orig isa Function) ? p.λ_orig(x) : p.λ_orig
+
+    T = eltype(tensor(unmask(X₁)))
+    eps = T(1e-12)
+
+    # Try to infer current time t from the loss scale c, assuming default scalefloss: 1/((1+ϵ)-t)^2
+    # If `c` did not come from scalefloss, clamp to a safe mid value.
+    infer_t(cval) = begin
+        ϵ = T(0.05)
+        pow = T(2)
+        tc = (T(1) + ϵ) .- (cval .^ (-T(1) / pow))
+        clamp.(tc, T(0), T(1))
+    end
+
+    # Broadcast t to the loss tensor's dimensionality
+    t_like_c = isa(c, Real) ? fill(T(c), 1) : T.(c)
+    t_est = infer_t(t_like_c)
+    # Remaining time r = 1 - t
+    r = max.(T(0), T(1) .- t_est)
+
+    # Compute switching probabilities over the remaining interval using exponential survival
+    # p(switch before end) = 1 - exp(-λ * r). Normalise to obtain weights.
+    λα = λ_alt_val(unmask(X₁))
+    λo = λ_orig_val(unmask(X₁))
+    p_alt = 1 .- exp.(-λα .* r)
+    p_orig = 1 .- exp.(-λo .* r)
+    Z = p_alt .+ p_orig .+ eps
+    w_orig = p_orig ./ Z
+    w_alt = p_alt ./ Z
+
+    # Targets: true endpoint and alternative endpoint (defaults to zeros)
+    Xtrue = tensor(unmask(X₁))
+    Xalt = zero.(Xtrue)
+
+    # Compute weighted MSE and apply masking/scaling
+    L_true = mse(X̂₁, Xtrue)
+    L_alt = mse(X̂₁, Xalt)
+    w_orig_e = expand(w_orig, ndims(L_true))
+    w_alt_e = expand(w_alt, ndims(L_alt))
+    return scaledmaskedmean(w_orig_e .* L_true .+ w_alt_e .* L_alt, c, getlmask(X₁))
+end
+
+# Overload that allows passing an explicit alternative endpoint alongside the true endpoint.
+function floss(p::fbu(SwitchBridgeProcess), X̂₁, X::Tuple{<:msu(ContinuousState),<:msu(ContinuousState)}, c)
+    X₁, Xalt = X
+    # Reuse the primary method but substitute the internal alternative endpoint.
+    # We temporarily compute the weighted loss components here for clarity.
+    λ_alt_val(x) = (p.λ_alt isa Function) ? p.λ_alt(x) : p.λ_alt
+    λ_orig_val(x) = (p.λ_orig isa Function) ? p.λ_orig(x) : p.λ_orig
+
+    T = eltype(tensor(unmask(X₁)))
+    eps = T(1e-12)
+
+    infer_t(cval) = begin
+        ϵ = T(0.05)
+        pow = T(2)
+        tc = (T(1) + ϵ) .- (cval .^ (-T(1) / pow))
+        clamp.(tc, T(0), T(1))
+    end
+
+    t_like_c = isa(c, Real) ? fill(T(c), 1) : T.(c)
+    t_est = infer_t(t_like_c)
+    r = max.(T(0), T(1) .- t_est)
+
+    λα = λ_alt_val(unmask(X₁))
+    λo = λ_orig_val(unmask(X₁))
+    p_alt = 1 .- exp.(-λα .* r)
+    p_orig = 1 .- exp.(-λo .* r)
+    Z = p_alt .+ p_orig .+ eps
+    w_orig = p_orig ./ Z
+    w_alt = p_alt ./ Z
+
+    Xtrue = tensor(unmask(X₁))
+    Xalternative = tensor(unmask(Xalt))
+
+    L_true = mse(X̂₁, Xtrue)
+    L_alt = mse(X̂₁, Xalternative)
+    w_orig_e = expand(w_orig, ndims(L_true))
+    w_alt_e = expand(w_alt, ndims(L_alt))
+    return scaledmaskedmean(w_orig_e .* L_true .+ w_alt_e .* L_alt, c, getlmask(X₁))
+end
