@@ -104,18 +104,19 @@ function floss(p::fbu(SwitchBridgeProcess), X̂₁, X₁::msu(ContinuousState), 
     # Remaining time r = 1 - t
     r = max.(T(0), T(1) .- t_est)
 
-    # Compute switching probabilities over the remaining interval using exponential survival
-    # p(switch before end) = 1 - exp(-λ * r). Normalise to obtain weights.
+    # Instantaneous mixture weights: proportional to incoming rates into each regime.
+    # Scale the rate toward the true endpoint by 1/(1 - t).
+    # Broadcast remaining time to the state shape for safe elementwise ops.
+    Xtrue = tensor(unmask(X₁))
+    r_safe = max.(expand(r, ndims(Xtrue)), eps)
     λα = λ_alt_val(unmask(X₁))
     λo = λ_orig_val(unmask(X₁))
-    p_alt = 1 .- exp.(-λα .* r)
-    p_orig = 1 .- exp.(-λo .* r)
-    Z = p_alt .+ p_orig .+ eps
-    w_orig = p_orig ./ Z
-    w_alt = p_alt ./ Z
+    λo_eff = λo ./ r_safe
+    Z = λα .+ λo_eff .+ eps
+    w_orig = λo_eff ./ Z
+    w_alt = λα ./ Z
 
     # Targets: true endpoint and alternative endpoint (defaults to zeros)
-    Xtrue = tensor(unmask(X₁))
     Xalt = zero.(Xtrue)
 
     # Compute weighted MSE and apply masking/scaling
@@ -148,13 +149,14 @@ function floss(p::fbu(SwitchBridgeProcess), X̂₁, X::Tuple{<:msu(ContinuousSta
     t_est = infer_t(t_like_c)
     r = max.(T(0), T(1) .- t_est)
 
+    Xtrue = tensor(unmask(X₁))
+    r_safe = max.(expand(r, ndims(Xtrue)), eps)
     λα = λ_alt_val(unmask(X₁))
     λo = λ_orig_val(unmask(X₁))
-    p_alt = 1 .- exp.(-λα .* r)
-    p_orig = 1 .- exp.(-λo .* r)
-    Z = p_alt .+ p_orig .+ eps
-    w_orig = p_orig ./ Z
-    w_alt = p_alt ./ Z
+    λo_eff = λo ./ r_safe
+    Z = λα .+ λo_eff .+ eps
+    w_orig = λo_eff ./ Z
+    w_alt = λα ./ Z
 
     Xtrue = tensor(unmask(X₁))
     Xalternative = tensor(unmask(Xalt))
