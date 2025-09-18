@@ -37,7 +37,7 @@ floss(P::fbu(DiscreteProcess), X̂₁, X₁::msu(DiscreteState{<:OneHotArray}), 
 floss(P::Tuple, X̂₁::Tuple, X₁::Tuple, c::Union{AbstractArray, Real}) = sum(floss.(P, X̂₁, X₁, (c,)))
 floss(P::Tuple, X̂₁::Tuple, X₁::Tuple, c::Tuple) = sum(floss.(P, X̂₁, X₁, c))
 floss(P::Union{fbu(ManifoldProcess), fbu(Deterministic)}, ξhat, ξ::Guide, c) = scaledmaskedmean(mse(ξhat, ξ.H), c, getlmask(ξ))
-
+floss(P::fbu(AuxillaryProcess), X̂₁, X₁::msu(AuxillaryState), c) = scaledmaskedmean(mse(X̂₁, X₁.cont_state), c, getlmask(X₁))
 #I should make a self-balancing loss that tracks the running mean/std and adaptively scales to balance against target weights.
 
 ########################################################################
