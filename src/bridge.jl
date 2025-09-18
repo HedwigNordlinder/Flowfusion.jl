@@ -77,9 +77,9 @@ If `X1` is a `MaskedState`, then `Xt` will equal `X1` where the conditioning mas
 `P`, `X0`, `X1` can also be tuples where the Nth element of `P` will be used for the Nth elements of `X0` and `X1`.
 The same `t` and (optionally) `t0` will be used for all elements. If you need a different `t` for each Proces/State, broadcast with `bridge.(P, X0, X1, t0, t)`.
 """
-
-function bridge(P::AuxillaryProcess, X0, X1, t)
-    endpoint_conditioned_sample(X0, X1, P, t) #No change in time, so just return X0 (or X1 if t=1)
+# Enforced types to force proper dispatch
+function bridge(P::AuxillaryProcess, X0::AuxillaryState, X1::AuxillaryState, t)
+    endpoint_conditioned_sample(X0, X1, P, t)
 end
 function bridge(P::UProcess, X0, X1, t0, t)
     T = eltype(t)
