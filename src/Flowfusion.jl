@@ -30,6 +30,8 @@ include("doob.jl")
 
 include("batching.jl")
 
+include("indel.jl")
+
 export
     #Processes not in ForwardBackward.jl
     InterpolatingDiscreteFlow,
@@ -50,7 +52,8 @@ export
     tcloss,
     dense,
     batch,
-    regroup
+    regroup,
+    combine
 
 
 #Useful for demos etc:
