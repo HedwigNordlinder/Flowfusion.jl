@@ -67,7 +67,6 @@ function combine(elements::ContinuousState, new_elements::ContinuousState, args.
     return ContinuousState(combined_state)
 end
 
-# Method for ManifoldState
 function combine(elements::ManifoldState, new_elements::ManifoldState, args...)
     @assert elements.M == new_elements.M "Manifolds must match"
     combined_state = combine(elements.state, new_elements.state, args...)
