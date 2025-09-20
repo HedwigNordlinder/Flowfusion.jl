@@ -64,3 +64,13 @@ struct NoisyInterpolatingDiscreteFlow{T} <: ConvexInterpolatingDiscreteFlow
     dκ₂::Function   # derivative of κ₂
     mask_token::T   # the token that is used for the X0 state
 end
+
+#A process where mean to which it reverts is X1
+struct OUFlow{T} <: Process
+    θ::T
+    v_at_0::T
+    v_at_1::T
+    dec::T
+end
+
+OUFlow(θ::T, v_at_0::T) where T = OUFlow(θ, v_at_0, T(1e-2), T(-0.1))
