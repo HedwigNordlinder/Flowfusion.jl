@@ -35,6 +35,7 @@ export
     InterpolatingDiscreteFlow,
     NoisyInterpolatingDiscreteFlow,
     DoobMatchingFlow,
+    OUFlow,
     MaskedState,
     Guide,
     tangent_guide,

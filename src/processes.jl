@@ -129,3 +129,9 @@ function step(P::NoisyInterpolatingDiscreteFlow{<:Integer}, Xₜ::DiscreteState{
     clamp!(tensor(newXₜ), 0, Inf)
     return rand(newXₜ)
 end
+
+function bridge(P::OUFlow, X0, X1, t0, t)
+    OU = OrnsteinUhlenbeckExpVar(tensor(X1), P.θ, P.v_at_0, P.v_at_1, dec = P.dec) #<-Note X1 as mean
+    endpoint_conditioned_sample(X0, X1, OU, t0, t, eltype(t)(1))
+end
+
