@@ -68,6 +68,6 @@ function so3_tangent_coordinates_stack(R1::AbstractArray{T,3}, Rt::AbstractArray
     return tangent
 end
 
-function so3_tangent_coordinates_stack(rhat::AbstractArray{T,4}, r::AbstractArray{T,4}) where T
-    return reshape(so3_tangent_coordinates_stack(reshape(rhat, 3, 3, :), reshape(r, 3, 3, :)), 3, size(rhat,3), size(rhat,4))
+function so3_tangent_coordinates_stack(R1::AbstractArray{T,4}, Rt::AbstractArray{T,4}) where T
+    return reshape(so3_tangent_coordinates_stack(reshape(R1, 3, 3, :), reshape(Rt, 3, 3, :)), 3, size(R1,3), size(R1,4))
 end
