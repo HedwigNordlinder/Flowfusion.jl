@@ -52,9 +52,9 @@ floss(P::Union{fbu(ManifoldProcess), fbu(Deterministic)}, ξhat, ξ::Guide, c) =
 
 #It is sometimes useful to be able to compute the tangent coordinates from the predicted endpoint,
 #eg. if the model needs to reason about its final location during the forward pass.
-function so3_tangent_coordinates_stack(Rt::AbstractArray{T,3}, R1::AbstractArray{T,3}) where T
+function so3_tangent_coordinates_stack(R1::AbstractArray{T,3}, Rt::AbstractArray{T,3}) where T
     eps = T(0.00001)
-    R = batched_mul(batched_transpose(R1), Rt)
+    R = batched_mul(batched_transpose(Rt), R1)
     tr_R = R[1,1,:] .+ R[2,2,:] .+ R[3,3,:]
     theta = acos.(clamp.((tr_R .- 1) ./ 2,T(-0.99),T(0.99)))
     sin_theta = sin.(theta)
@@ -68,6 +68,6 @@ function so3_tangent_coordinates_stack(Rt::AbstractArray{T,3}, R1::AbstractArray
     return tangent
 end
 
-function so3_tangent_coordinates_stack(rhat::AbstractArray{T,4}, r::AbstractArray{T,4}) where T
-    return reshape(so3_tangent_coordinates_stack(reshape(rhat, 3, 3, :), reshape(r, 3, 3, :)), 3, size(rhat,3), size(rhat,4))
+function so3_tangent_coordinates_stack(R1::AbstractArray{T,4}, Rt::AbstractArray{T,4}) where T
+    return reshape(so3_tangent_coordinates_stack(reshape(R1, 3, 3, :), reshape(Rt, 3, 3, :)), 3, size(R1,3), size(R1,4))
 end
