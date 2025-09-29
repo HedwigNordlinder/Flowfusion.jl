@@ -135,26 +135,31 @@ function bridge(p::DistNoisyInterpolatingDiscreteFlow,
     tst = expand(t,  ndims(x0.state))
 
     κ1_0, κ2_0 = κ1(p, ts0), κ2(p, ts0)
-    κ1_t, κ2_t = κ1(p, tst), κ2(p, tst)
+    κ1_t, κ2_t = κ1(p, tst),  κ2(p, tst)
     κ3_0, κ3_t = 1 .- κ1_0 .- κ2_0, 1 .- κ1_t .- κ2_t
 
-    ϵ = eps(eltype(κ3_0))
+    ϵ = eps(κ3_0 isa AbstractArray ? eltype(κ3_0) : typeof(κ3_0))
     denom = max.(κ3_0, ϵ)
 
-    w1 = clamp.((κ1_t .- κ1_0) ./ denom, 0.0, 1.0)
-    w2 = clamp.((κ2_t .- κ2_0) ./ denom, 0.0, 1.0)
-    w3 = clamp.( κ3_t           ./ denom, 0.0, 1.0)
+    w1_raw = clamp.((κ1_t .- κ1_0) ./ denom, 0.0, 1.0)
+    w2_raw = clamp.((κ2_t .- κ2_0) ./ denom, 0.0, 1.0)
+    w3_raw = clamp.( κ3_t           ./ denom, 0.0, 1.0)
 
-    s = w1 .+ w2 .+ w3
-    w1 ./= s; w2 ./= s; w3 ./= s
+    s  = w1_raw .+ w2_raw .+ w3_raw
+    w1 = w1_raw ./ s
+    w2 = w2_raw ./ s
+    # w3 not used explicitly below
 
     r = rand(D...)
     Xt = copy(x0)
+
+    x1bool      = w1 .> r
+    uniformbool = (w1 .+ w2) .> r
+
     @inbounds for I in eachindex(r)
-        u = r[I]
-        if u < w1[I]
+        if x1bool[I]
             Xt.state[I] = x1.state[I]
-        elseif u < (w1[I] + w2[I])
+        elseif uniformbool[I]
             Xt.state[I] = rand(1:x0.K)
         else
             Xt.state[I] = x0.state[I]
