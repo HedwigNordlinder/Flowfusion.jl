@@ -19,7 +19,7 @@ Later:
 
 module Flowfusion
 
-using ForwardBackward, OneHotArrays, Adapt, Manifolds, NNlib, LogExpFunctions
+using ForwardBackward, OneHotArrays, Adapt, Manifolds, NNlib, LogExpFunctions, Distributions
 
 include("types.jl")
 include("mask.jl")
@@ -29,6 +29,9 @@ include("processes.jl")
 include("doob.jl")
 
 include("batching.jl")
+
+include("indel.jl")
+include("dist_dfm.jl")
 
 export
     #Processes not in ForwardBackward.jl
@@ -51,7 +54,8 @@ export
     tcloss,
     dense,
     batch,
-    regroup
+    regroup,
+    combine
 
 
 #Useful for demos etc:
