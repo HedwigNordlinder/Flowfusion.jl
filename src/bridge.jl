@@ -80,9 +80,7 @@ The same `t` and (optionally) `t0` will be used for all elements. If you need a 
 
 function bridge(P::UProcess, X0, X1, t0, t)
     T = eltype(t)
-    tF = T.(tscale(P,t) .- tscale(P,t0))
-    tB = T.(tscale(P,1) .- tscale(P,t))
-    endpoint_conditioned_sample(X0, X1, process(P), tF, tB)
+    endpoint_conditioned_sample(X0, X1, process(P), tscale(P,t0), tscale(P,t), T.(tscale(P,1)))
 end
 bridge(P, X0, X1, t) = bridge(P, X0, X1, eltype(t)(0.0), t)
 bridge(P::Tuple{Vararg{UProcess}}, X0::Tuple{Vararg{UState}}, X1::Tuple, t0, t) = bridge.(P, X0, X1, (t0,), (t, ))
