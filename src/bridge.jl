@@ -59,7 +59,7 @@ resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = X̂�
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = X̂₁ #<-Need to test if this breaking anything else
 function resolveprediction(X̂₁, Xₜ::LatentJumpingState) 
     continous_prediction, rate_prediction = X̂₁
-    rates = NNlib.softplus.(rate_prediction)
+    rates = NNlib.softplus.(collect(eachcol(rate_prediction)))
     discrete_state = rand(Categorical(rates ./ sum(rates)))
     return LatentJumpingState(ContinuousState(continuous_prediction), discrete_state, ContinuousState(continuous_prediction))
 end
