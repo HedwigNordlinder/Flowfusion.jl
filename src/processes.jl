@@ -135,3 +135,4 @@ function bridge(P::OUFlow, X0, X1, t0, t)
     endpoint_conditioned_sample(X0, X1, OU, t0, t, eltype(t)(1))
 end
 
+
