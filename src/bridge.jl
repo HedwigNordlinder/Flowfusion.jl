@@ -57,7 +57,12 @@ resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
 #resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = copytensor!(stochastic(unhot(Xₜ)), X̂₁) #Probably inefficient
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = X̂₁ #<-Need to test if this breaking anything else
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = X̂₁ #<-Need to test if this breaking anything else
-
+function resolveprediction(X̂₁, Xₜ::LatentJumpingState) 
+    continous_prediction, rate_prediction = X̂₁
+    rates = NNlib.softplus.(rate_prediction)
+    discrete_state = rand(Categorical(rates ./ sum(rates)))
+    return LatentJumpingState(ContinuousState(continuous_prediction), discrete_state, ContinuousState(continuous_prediction))
+end
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
 #Passthrough if the user returns a State or Likelihood
 resolveprediction(X̂₁::State, Xₜ) = X̂₁
@@ -203,7 +208,3 @@ batch(Xs::Vector{<:MaskedState}; dims_from_end = 1) = MaskedState(batch(unmask.(
 
 
 # Implementation of gen for LatentJumpingProcess
-
-function gen(P::LatentJumpingProcess, X0, model, steps::AbstractVector; tracker::Function=Returns(nothing), midpoint = false)
-    
-end
