@@ -61,7 +61,7 @@ function resolveprediction(X̂₁, Xₜ::LatentJumpingState)
     continuous_prediction, rate_prediction = X̂₁
     rates = NNlib.softplus.(collect(eachcol(rate_prediction)))
     discrete_state = [rand(Categorical(rates[i] ./ sum(rates[i]))) for i in eachindex(rates)]
-    return LatentJumpingState(ContinuousState(continuous_prediction), discrete_state, ContinuousState(continuous_prediction))
+    return LatentJumpingState(ContinuousState(continuous_prediction), DiscreteState(Xₜ.K, discrete_state), ContinuousState(continuous_prediction))
 end
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
 #Passthrough if the user returns a State or Likelihood
