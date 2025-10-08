@@ -200,3 +200,10 @@ batch(Xs::Vector{<:Tuple{Vararg{UState}}}, dims_from_end = 1) = Tuple([batch([x[
 
 #Should never move to ForwardBackward.jl
 batch(Xs::Vector{<:MaskedState}; dims_from_end = 1) = MaskedState(batch(unmask.(Xs); dims_from_end), tensor_cat([X.cmask for X in Xs]; dims_from_end), tensor_cat([X.lmask for X in Xs]; dims_from_end))
+
+
+# Implementation of gen for LatentJumpingProcess
+
+function gen(P::LatentJumpingProcess, X0, model, steps::AbstractVector; tracker::Function=Returns(nothing), midpoint = false)
+    
+end
