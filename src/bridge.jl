@@ -205,31 +205,32 @@ batch(Xs::Vector{<:Tuple{Vararg{UState}}}, dims_from_end = 1) = Tuple([batch([x[
 
 #Should never move to ForwardBackward.jl
 batch(Xs::Vector{<:MaskedState}; dims_from_end = 1) = MaskedState(batch(unmask.(Xs); dims_from_end), tensor_cat([X.cmask for X in Xs]; dims_from_end), tensor_cat([X.lmask for X in Xs]; dims_from_end))
-Flowfusion.switching_state_to_jump_value(
+
+
+# Implementation of gen for LatentJumpingProcess
+switching_state_to_jump_value(
     state::ForwardBackward.DiscreteState{<:AbstractVector},
     process::Flowfusion.LatentJumpingProcess,
 ) = reshape(process.possible_jumps[state.state], 1, :)
-function Flowfusion.endpoint_conditioned_sample(X0::ForwardBackward.LatentJumpingState,
-    X1::ForwardBackward.LatentJumpingState,
-    process::Flowfusion.LatentJumpingProcess,
-    t::Real; ϵ=1e-2, tracker::Function=Returns(nothing))
-    
+
+function endpoint_conditioned_sample(X0::ForwardBackward.LatentJumpingState,
+                                                X1::ForwardBackward.LatentJumpingState,
+                                                process::Flowfusion.LatentJumpingProcess,
+                                                t::Real; ϵ=1e-2, tracker::Function=Returns(nothing))
     xt = copy(X0)
     current_time = eltype(t)(0.0)
     while current_time < t
-    δ = eltype(t)(min(t - current_time, ϵ))
+        δ = eltype(t)(min(t - current_time, ϵ))
         next_switching_state = endpoint_conditioned_sample(xt.switching_state, X1.switching_state, process.jumping_process, current_time, current_time+δ, eltype(t)(1))
         next_continuous_state = endpoint_conditioned_sample(xt.continuous_state, X1.continuous_state, process.main_process, current_time, current_time+δ, eltype(t)(1))
-    Δ = Flowfusion.switching_state_to_jump_value(next_switching_state, process) .-
-    Flowfusion.switching_state_to_jump_value(xt.switching_state, process)
-    augmented_continuous_state = next_continuous_state.state .+ reshape(Δ, 1, :)
-    xt = ForwardBackward.LatentJumpingState(ForwardBackward.ContinuousState(augmented_continuous_state),
-    next_switching_state,
-    next_continuous_state)
-current_time += δ
-tracker(current_time, xt)
+        Δ = Flowfusion.switching_state_to_jump_value(next_switching_state, process) .-
+            Flowfusion.switching_state_to_jump_value(xt.switching_state, process)
+        augmented_continuous_state = next_continuous_state.state .+ reshape(Δ, 1, :)
+        xt = ForwardBackward.LatentJumpingState(ForwardBackward.ContinuousState(augmented_continuous_state),
+                                                next_switching_state,
+                                                next_continuous_state)
+        current_time += δ
+        tracker(current_time, xt)
+    end
+    return xt
 end
-return xt
-end
-
-# Implementation of gen for LatentJumpingProcess
