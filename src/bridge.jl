@@ -66,7 +66,7 @@ function resolveprediction(pred::Tuple{AbstractArray,AbstractArray},
     term_states   = collect(argmax_idx)             # Vector{Int} of length B
 
     K = X0.switching_state.K
-    
+    println(term_states)
     # Build the new LatentJumpingState for the endpoint:
     X1_disc = DiscreteState(K, term_states[2])
     println(X1_disc.state)
