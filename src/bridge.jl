@@ -73,7 +73,7 @@ function resolveprediction(pred::Tuple{AbstractArray,AbstractArray},
     X1_cont = ContinuousState(cont_pred)            # just the continuous endpoint
     # For LatentJumpingState the third field is the "combined" continuous state used by the process;
     # it should mirror the continuous coordinate here — do NOT add expected jumps.
-    return LatentJumpingState(X1_cont, X1_disc, ContinuousState(cont_pred))
+    return LatentJumpingState(ContinuousState(cont_pred), X1_disc, X1_cont)
 end
 
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
