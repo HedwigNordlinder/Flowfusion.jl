@@ -58,7 +58,7 @@ resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = X̂₁ #<-Need to test if this breaking anything else
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = X̂₁ #<-Need to test if this breaking anything else
 function resolveprediction(pred::Tuple{AbstractArray,AbstractArray},
-                                      X0::LatentJumpingState)
+                                      X0::LatentJumpingState, jump_vector::AbstractVector)
     cont_pred, logits_pred = pred                 # (d,B), (K,B)
     # Pick the most likely terminal discrete state per trajectory (greedy is fine here)
     # If you prefer stochastic rollout, sample from softmax(logits_pred; dims=1).
@@ -70,10 +70,10 @@ function resolveprediction(pred::Tuple{AbstractArray,AbstractArray},
 
     # Build the new LatentJumpingState for the endpoint:
     X1_disc = DiscreteState(K, term_states)
-    X1_cont = ContinuousState(cont_pred)            # just the continuous endpoint
+    X1_cont = ContinuousState(cont_pred .+ jump_vector[X1_disc.state])            # just the continuous endpoint
     # For LatentJumpingState the third field is the "combined" continuous state used by the process;
     # it should mirror the continuous coordinate here — do NOT add expected jumps.
-    return LatentJumpingState(ContinuousState(cont_pred), X1_disc, X1_cont)
+    return LatentJumpingState(X1_cont, X1_disc, ContinuousState(cont_pred))
 end
 
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
