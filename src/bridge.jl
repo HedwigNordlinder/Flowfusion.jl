@@ -62,7 +62,7 @@ function combine(P::LatentJumpingProcess,
 
     cont_pred, logits_pred = pred             # cont_pred: (d,B), logits_pred: (K,B)
     d, B = size(cont_pred)
-    K     = X0.switching_state.k
+    K     = X0.switching_state.K
     Jmat  = jump_matrix(P)                    # (d,K)
 
     # choose terminal discrete label per sample (greedy; or sample from softmax if you prefer)
