@@ -57,12 +57,25 @@ resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
 #resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = copytensor!(stochastic(unhot(Xₜ)), X̂₁) #Probably inefficient
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = X̂₁ #<-Need to test if this breaking anything else
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = X̂₁ #<-Need to test if this breaking anything else
-function resolveprediction(X̂₁, Xₜ::LatentJumpingState) 
-    continuous_prediction, rate_prediction = X̂₁
-    rates = NNlib.softplus.(collect(eachcol(rate_prediction)))
-    discrete_state = [rand(Categorical(rates[i] ./ sum(rates[i]))) for i in eachindex(rates)]
-    return LatentJumpingState(ContinuousState(continuous_prediction), DiscreteState(Xₜ.switching_state.K, discrete_state), ContinuousState(continuous_prediction))
+function resolveprediction(pred::Tuple{AbstractArray,AbstractArray},
+                                      X0::LatentJumpingState)
+    cont_pred, logits_pred = pred                 # (d,B), (K,B)
+    # Pick the most likely terminal discrete state per trajectory (greedy is fine here)
+    # If you prefer stochastic rollout, sample from softmax(logits_pred; dims=1).
+    _, argmax_idx = findmax.(eachcol(logits_pred))  # returns (val, idx) per column
+    term_states   = collect(argmax_idx)             # Vector{Int} of length B
+
+    K = X0.switching_state.k
+    B = size(cont_pred, 2)
+
+    # Build the new LatentJumpingState for the endpoint:
+    X1_disc = DiscreteState(K, term_states)
+    X1_cont = ContinuousState(cont_pred)            # just the continuous endpoint
+    # For LatentJumpingState the third field is the "combined" continuous state used by the process;
+    # it should mirror the continuous coordinate here — do NOT add expected jumps.
+    return LatentJumpingState(X1_cont, X1_disc, ContinuousState(cont_pred))
 end
+
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
 #Passthrough if the user returns a State or Likelihood
 resolveprediction(X̂₁::State, Xₜ) = X̂₁
@@ -208,29 +221,3 @@ batch(Xs::Vector{<:MaskedState}; dims_from_end = 1) = MaskedState(batch(unmask.(
 
 
 # Implementation of gen for LatentJumpingProcess
-switching_state_to_jump_value(
-    state::ForwardBackward.DiscreteState{<:AbstractVector},
-    process::Flowfusion.LatentJumpingProcess,
-) = reshape(process.possible_jumps[state.state], 1, :)
-
-function endpoint_conditioned_sample(X0::ForwardBackward.LatentJumpingState,
-                                                X1::ForwardBackward.LatentJumpingState,
-                                                process::Flowfusion.LatentJumpingProcess,
-                                                t::Real; ϵ=1e-2, tracker::Function=Returns(nothing))
-    xt = copy(X0)
-    current_time = eltype(t)(0.0)
-    while current_time < t
-        δ = eltype(t)(min(t - current_time, ϵ))
-        next_switching_state = endpoint_conditioned_sample(xt.switching_state, X1.switching_state, process.jumping_process, current_time, current_time+δ, eltype(t)(1))
-        next_continuous_state = endpoint_conditioned_sample(xt.continuous_state, X1.continuous_state, process.main_process, current_time, current_time+δ, eltype(t)(1))
-        Δ = Flowfusion.switching_state_to_jump_value(next_switching_state, process) .-
-            Flowfusion.switching_state_to_jump_value(xt.switching_state, process)
-        augmented_continuous_state = next_continuous_state.state .+ reshape(Δ, 1, :)
-        xt = ForwardBackward.LatentJumpingState(ForwardBackward.ContinuousState(augmented_continuous_state),
-                                                next_switching_state,
-                                                next_continuous_state)
-        current_time += δ
-        tracker(current_time, xt)
-    end
-    return xt
-end
