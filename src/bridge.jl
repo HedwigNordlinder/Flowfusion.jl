@@ -50,7 +50,36 @@ end
 #resolveprediction exists to stop bridge from needing multiple definitions.
 #Tuple broadcast:
 resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
+jump_matrix(P::LatentJumpingProcess) = begin
+    J = P.possible_jumps             # whatever you called it in your process
+    ndims(J) == 1 ? reshape(J, 1, length(J)) : J
+end
 
+# Turn (cont_pred, logits_pred) into a LatentJumpingState *at resolution time*.
+function combine(P::LatentJumpingProcess,
+                            pred::Tuple{AbstractArray,AbstractArray},
+                            X0::LatentJumpingState)
+
+    cont_pred, logits_pred = pred             # cont_pred: (d,B), logits_pred: (K,B)
+    d, B = size(cont_pred)
+    K     = X0.switching_state.k
+    Jmat  = jump_matrix(P)                    # (d,K)
+
+    # choose terminal discrete label per sample (greedy; or sample from softmax if you prefer)
+    _, idx = findmax.(eachcol(logits_pred))   # idx :: Vector{Int} length B
+
+    # gather jump offsets column-wise
+    jump_mat = Jmat[:, idx]                   # (d,B)
+
+    # joint = continuous + jump offset (ONCE, at resolution)
+    joint = cont_pred .+ jump_mat             # (d,B)
+
+    X1_disc  = DiscreteState(K, idx)
+    X1_joint = ContinuousState(joint)
+
+    # IMPORTANT: make first and third fields identical (joint coordinate)
+    return LatentJumpingState(X1_joint, X1_disc, ContinuousState(cont_pred))
+end
 #Default if X̂₁ is a plain tensor:
 #I think these were serving processes with a faulty assumption, so I'm swapping them out to make Doob flows easier.
 #resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = copytensor!(stochastic(Xₜ), X̂₁) #Returns a Likelihood
