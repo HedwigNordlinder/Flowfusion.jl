@@ -57,24 +57,35 @@ resolveprediction(dest::Tuple, src::Tuple) = map(resolveprediction, dest, src)
 #resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = copytensor!(stochastic(unhot(Xₜ)), X̂₁) #Probably inefficient
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:AbstractArray{<:Signed}}) = X̂₁ #<-Need to test if this breaking anything else
 resolveprediction(X̂₁, Xₜ::DiscreteState{<:Union{OneHotArray, OneHotMatrix}}) = X̂₁ #<-Need to test if this breaking anything else
+# jump_vector: either length-K (d=1) or a (d,K) matrix of offsets per discrete state
 function resolveprediction(pred::Tuple{AbstractArray,AbstractArray},
-                                      X0::LatentJumpingState, jump_vector::AbstractVector)
-    cont_pred, logits_pred = pred                 # (d,B), (K,B)
-    # Pick the most likely terminal discrete state per trajectory (greedy is fine here)
-    # If you prefer stochastic rollout, sample from softmax(logits_pred; dims=1).
-    _, argmax_idx = findmax.(eachcol(logits_pred))  # returns (val, idx) per column
-    term_states   = collect(argmax_idx)             # Vector{Int} of length B
+    X0::LatentJumpingState,
+    jump_vector)
+
+    cont_pred, logits_pred = pred               # cont_pred: (d,B), logits_pred: (K,B)
+
+# choose a terminal state per column (greedy is fine for resolve; sampler handles paths)
+    _, argmax_idx = findmax.(eachcol(logits_pred))
+    term_states = collect(argmax_idx)           # Vector{Int} length B
 
     K = X0.switching_state.k
-    B = size(cont_pred, 2)
+    d, B = size(cont_pred)
 
-    # Build the new LatentJumpingState for the endpoint:
+# --- build the jump matrix per sample (d,B) ---
+# (handles both 1D and d-D cases)
+    J = ndims(jump_vector) == 1 ? reshape(jump_vector, d, K) : jump_vector
+    jump_mat = J[:, term_states]                # take the chosen state's column for each sample
+
+# joint = continuous + jump once (at resolution)
+    joint = cont_pred .+ jump_mat               # (d,B)
+
     X1_disc = DiscreteState(K, term_states)
-    X1_cont = ContinuousState(cont_pred .+ jump_vector[X1_disc.state])            # just the continuous endpoint
-    # For LatentJumpingState the third field is the "combined" continuous state used by the process;
-    # it should mirror the continuous coordinate here — do NOT add expected jumps.
-    return LatentJumpingState(X1_cont, X1_disc, ContinuousState(cont_pred))
+    X1_joint = ContinuousState(joint)
+
+# IMPORTANT: keep "combined" == "joint" so the next step sees the same state you plot
+    return LatentJumpingState(X1_joint, X1_disc, ContinuousState(cont_pred))
 end
+
 
 resolveprediction(X̂₁, Xₜ::State) = copytensor!(copy(Xₜ), X̂₁) #Returns a State - Handles Continuous and Manifold cases
 #Passthrough if the user returns a State or Likelihood
