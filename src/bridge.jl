@@ -68,7 +68,7 @@ function resolveprediction(pred::Tuple{AbstractArray,AbstractArray},
     K = X0.switching_state.K
     
     # Build the new LatentJumpingState for the endpoint:
-    X1_disc = DiscreteState(K, term_states)
+    X1_disc = DiscreteState(K, term_states[2])
     println(X1_disc.state)
     X1_cont = ContinuousState(cont_pred .+ jump_vector[X1_disc.state])            # just the continuous endpoint
     # For LatentJumpingState the third field is the "combined" continuous state used by the process;
