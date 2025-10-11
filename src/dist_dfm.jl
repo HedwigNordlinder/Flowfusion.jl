@@ -1,4 +1,10 @@
 # A DFM that uses κ(t) = CDF(dist, t), κ̇ = PDF(dist, t)
+"""
+    DistInterpolatingDiscreteFlow(D::UnivariateDistribution)
+
+D controls the schedule.
+Note: both training and inference expect the model to output logits, unlike the other `InterpolatingDiscreteFlow` (where the user needs a manual `softmax` for inference).
+"""
 struct DistInterpolatingDiscreteFlow <: ConvexInterpolatingDiscreteFlow
     D::UnivariateDistribution  # support [0,1]
 end
@@ -34,7 +40,8 @@ end
 # Euler step for distribution-based DFM (same as your step, with κ̇/ (1-κ))
 function step(P::DistInterpolatingDiscreteFlow,
               Xₜ::DiscreteState{<:AbstractArray{<:Signed}},
-              X̂₁, s₁, s₂)
+              X̂₁logits, s₁, s₂)
+    X̂₁ = LogExpFunctions.softmax(X̂₁logits)
     step = s₂ .- s₁
     ohXₜ = onehot(Xₜ)
     κ1  = cdf.(Ref(P.D), s₁)
@@ -61,6 +68,7 @@ Derivatives:
   dκ₂(t) = ωu * ( -(dκ₁) * κ̃₂ + (1 - κ₁) * dκ̃₂ ),   dκ₃ = -(dκ₁ + dκ₂)
 
 `ωu` directly controls the uniform noise amount; set ωu=0 for no-uniform, ωu→1 for max-gated uniform.
+Note: both training and inference expect the model to output logits, unlike the other `NoisyInterpolatingDiscreteFlow` (where the user needs a manual `softmax` for inference).
 """
 struct DistNoisyInterpolatingDiscreteFlow{D1<:UnivariateDistribution,
                                           D2<:UnivariateDistribution, T} <: ConvexInterpolatingDiscreteFlow
@@ -173,7 +181,8 @@ end
 # -------------------
 function step(P::DistNoisyInterpolatingDiscreteFlow,
               Xₜ::DiscreteState{<:AbstractArray{<:Signed}},
-              X̂₁, s₁, s₂)
+              X̂₁logits, s₁, s₂)
+    X̂₁ = LogExpFunction.softmax(X̂₁logits)
     T    = eltype(s₁)
     Δt   = s₂ .- s₁
     ohXₜ = onehot(Xₜ)
