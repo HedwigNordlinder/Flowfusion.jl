@@ -41,7 +41,7 @@ end
 function step(P::DistInterpolatingDiscreteFlow,
               Xₜ::DiscreteState{<:AbstractArray{<:Signed}},
               X̂₁logits, s₁, s₂)
-    X̂₁ = LogExpFunctions.softmax(X̂₁logits)
+    X̂₁ = LogExpFunctions.softmax(X̂₁logits, dims = 1)
     step = s₂ .- s₁
     ohXₜ = onehot(Xₜ)
     κ1  = cdf.(Ref(P.D), s₁)
@@ -182,7 +182,7 @@ end
 function step(P::DistNoisyInterpolatingDiscreteFlow,
               Xₜ::DiscreteState{<:AbstractArray{<:Signed}},
               X̂₁logits, s₁, s₂)
-    X̂₁ = LogExpFunctions.softmax(X̂₁logits)
+    X̂₁ = LogExpFunctions.softmax(X̂₁logits, dims = 1)
     T    = eltype(s₁)
     Δt   = s₂ .- s₁
     ohXₜ = onehot(Xₜ)
