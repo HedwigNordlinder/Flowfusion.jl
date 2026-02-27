@@ -49,13 +49,15 @@ export
     stack_tracker,
     onehot,
     unhot,
-    FProcess, 
+    FProcess,
     floss,
     tcloss,
     dense,
     batch,
     regroup,
-    combine
+    combine,
+    resolveprediction,
+    mask
 
 
 #Useful for demos etc:
