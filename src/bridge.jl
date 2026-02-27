@@ -14,7 +14,17 @@ tscale(P::FProcess, t) = P.F.(t)
 Adapt.adapt_structure(to, S::ForwardBackward.DiscreteState) = ForwardBackward.DiscreteState(S.K, Adapt.adapt(to, S.state))
 Adapt.adapt_structure(to, S::ForwardBackward.ContinuousState) = ForwardBackward.ContinuousState(Adapt.adapt(to, S.state))
 Adapt.adapt_structure(to, S::ForwardBackward.CategoricalLikelihood) = ForwardBackward.CategoricalLikelihood(Adapt.adapt(to, S.dist), Adapt.adapt(to, S.log_norm_const))
-Adapt.adapt_structure(to, S::ForwardBackward.ManifoldState) = ForwardBackward.ManifoldState(S.M, Adapt.adapt(to, S.state))
+function Adapt.adapt_structure(to, S::ForwardBackward.ManifoldState)
+    t = ForwardBackward.tensor(S)          # plain Array{Float32, 4} — (3, 3, L, B)
+    adapted_t = Adapt.adapt(to, t)         # now a CuArray{Float32, 4}
+    T = eltype(adapted_t)
+    M = ndims(first(S.state))             # 2 (each element is a 3×3 matrix)
+    # Wrap the adapted flat array directly as an ArrayOfSimilarArrays — no copy.
+    # Get the unparameterized constructor from the existing type to avoid importing ArraysOfArrays.
+    AoSA = typeof(S.state).name.wrapper
+    aosa = AoSA{T, M}(adapted_t)
+    @invoke ForwardBackward.ManifoldState(S.M, aosa::AbstractArray)
+end
 
 """
     onehot(X)
